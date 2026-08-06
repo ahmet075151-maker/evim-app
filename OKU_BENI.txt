@@ -1,0 +1,74 @@
+EVİM — Ev Eşya Envanteri Uygulaması
+====================================
+
+NASIL ÇALIŞTIRILIR (Windows)
+-----------------------------
+1) Bu klasörü masaüstünüze koyun (zaten oradaysa sorun yok).
+2) "1_ILK_KURULUM.bat" dosyasını ÇİFT TIKLAYIN.
+   - Bilgisayarınızda WSL (Windows'un Linux alt sistemi) yoksa kurar.
+   - Kurulumdan sonra bilgisayarı YENİDEN BAŞLATMANIZ istenecek. Yeniden
+     başlattıktan sonra açılan Ubuntu penceresinde basit bir kullanıcı
+     adı/şifre belirlemeniz istenebilir (şifre yazarken ekranda görünmez,
+     bu normaldir, istediğinizi yazabilirsiniz).
+   - WSL zaten kuruluysa bu adım "zaten kurulu" deyip çıkacaktır, 2. adıma geçin.
+3) "2_APK_OLUSTUR.bat" dosyasını ÇİFT TIKLAYIN.
+   - Gerekli tüm programları (Java, derleyiciler, Android araçları, Python
+     kütüphaneleri) otomatik kurar ve APK'yı derler.
+   - İlk çalıştırmada Android SDK/NDK indirileceği için 15-40 dakika
+     sürebilir (internet hızınıza bağlı). Pencereyi KAPATMAYIN.
+4) İşlem bitince masaüstünüzde "Evim.apk" dosyasını göreceksiniz.
+
+NEDEN İKİ AYRI BAT DOSYASI VAR?
+--------------------------------
+APK derleme aracı (buildozer) Windows'ta doğrudan çalışmıyor, Linux
+gerektiriyor. Bu yüzden Windows'un içine gömülü Linux katmanı olan
+WSL'i kullanıyoruz. WSL bilgisayarınızda ilk kez kuruluyorsa Windows
+bir yeniden başlatma istiyor — bu yüzden kurulum iki adıma bölündü.
+WSL zaten kuruluysa doğrudan 2. dosyayı çalıştırmanız yeterli.
+
+APK'YI TELEFONA KURMA
+-----------------------
+1) "Evim.apk" dosyasını telefonunuza aktarın (kablo, WhatsApp, Drive vb.)
+2) Telefonunuzda dosyaya dokunup kuruluma izin verin. Android "bilinmeyen
+   kaynaklardan yükleme" izni isteyebilir — buna izin vermeniz gerekir
+   (Ayarlar > Güvenlik ekranından da açabilirsiniz).
+3) Kurulum bitince "Evim" simgesiyle uygulamayı açabilirsiniz.
+
+UYGULAMANIN ÖZELLİKLERİ
+-------------------------
+- Odalar: Ana ekranda evinizdeki odaları kart olarak görürsünüz.
+- Bir odaya dokunduğunuzda içine "girersiniz" ve o odadaki eşyaları görürsünüz.
+- Bir eşyaya dokunduğunuzda onun İÇİNDEKİ eşyaları görürsünüz (örn. Kanepe
+  içinde bir Kutu, Kutu içinde bir Şarj Kablosu — sınırsız derinlikte
+  iç içe eşya ekleyebilirsiniz).
+- Üstte gezinme yolu (breadcrumb) yazar: Salon › Kanepe › Kutu gibi.
+- Her eşyaya kategori (Elektronik, Mobilya, Giyim, Kitap vb.) ve not eklenebilir.
+- Ekle / Düzenle / Sil butonları her eşyada mevcut.
+- Sağ üstte, dikkat çekmeyen küçük bir "geçmiş" simgesi var — silinen tüm
+  eşyaların adını, hangi odadan/hangi eşyanın içinden silindiğini ve tarihini
+  gösterir.
+- Sağ üstte güneş/ay simgesiyle Karanlık / Aydınlık mod değiştirilebilir.
+- Tüm arayüz Türkçe'dir.
+- Uygulama adı "Evim", simgesi turuncu zemin üzerinde beyaz ev sembolüdür.
+
+EKSTRA OLARAK EKLEDİĞİM ÖZELLİKLER (kendi fikrim)
+---------------------------------------------------
+- Kategori seçimi için tıklanabilir açılır menü (yazım hatalarını önler).
+- Eşya kartlarında, içinde kaç alt eşya olduğunu gösteren küçük sayaç
+  (örn. "Kutu (3)") — neyin içinin dolu olduğunu tek bakışta görürsünüz.
+- Bir oda veya eşya silindiğinde içindekiler de otomatik silinir, ama
+  geçmiş kaydında bu bilgi korunur.
+- Kartlı, yuvarlak köşeli, gölgeli modern Material Design görünüm.
+- Tüm veriler telefonunuzda yerel olarak (internet gerekmeden) saklanır.
+
+NOT: Uygulama KivyMD KULLANMAZ, sade Kivy ile yazılmıştır. Android
+derleme sunucusunda KivyMD'nin pip kurulumu kararsız çıktığı için
+tamamen kaldırıldı; görsel tasarım (yuvarlak kartlar, renkli
+avatarlar) elle çizilerek aynı şekilde korundu.
+
+GELİŞTİRME NOTU
+-----------------
+Uygulamanın Python kaynak kodu "main.py" dosyasındadır, dilerseniz
+metni değiştirip (oda ikonları, renkler, kategori listesi vb.) tekrar
+"2_APK_OLUSTUR.bat" dosyasını çalıştırarak güncel APK'yı yeniden
+üretebilirsiniz.
