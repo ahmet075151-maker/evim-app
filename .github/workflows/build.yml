@@ -1,0 +1,24 @@
+name: Evim APK Olustur
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: APK derle (resmi Kivy Buildozer Docker imaji ile)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/home/user/hostcwd \
+            kivy/buildozer android debug
+
+      - name: APK'yi indirilebilir yap
+        uses: actions/upload-artifact@v4
+        with:
+          name: Evim-APK
+          path: bin/*.apk
