@@ -1,0 +1,39 @@
+BULUTTA APK DERLEME (BILGISAYARINIZDA HICBIR SEY KURMADAN)
+=============================================================
+Bilgisayarinizin BIOS'unda sanallastirma olmadigi icin WSL1 de
+calismazsa (veya ugrasmak istemezseniz), bu yontem tamamen
+GitHub'in ucretsiz bulut sunucularinda calisir - bilgisayariniza
+sadece internet tarayicisi yeterlidir.
+
+ADIM ADIM
+----------
+1) https://github.com adresine gidip ucretsiz bir hesap acin
+   (zaten hesabiniz varsa giris yapin).
+
+2) Sag ustten "+" > "New repository" ile yeni, adi "evim-app"
+   olan, "Public" secili bos bir depo (repository) olusturun.
+
+3) Acilan depo sayfasinda "uploading an existing file" (veya
+   "Add file > Upload files") baglantisina tiklayin.
+
+4) Bu klasordeki TUM dosyalari (main.py, buildozer.spec, icon.png,
+   .github klasoru dahil) surukleyip birakin ve "Commit changes"
+   ile yukleyin.
+   ONEMLI: ".github" klasorunu de mutlaka yuklemelisiniz, cunku
+   APK'yi otomatik derleyen talimat orada.
+
+5) Depo sayfasinda ustteki "Actions" sekmesine tiklayin.
+   Yukleme sonrasi otomatik olarak "Evim APK Olustur" adinda bir
+   islem baslayacaktir (baslamazsa "Run workflow" butonuna basin).
+
+6) Islem yesil tik ile bitince (yaklasik 10-20 dakika surer),
+   ayni sayfada asagida "Artifacts" bolumunde "Evim-APK" yazan
+   bir zip dosyasi belirir. Ona tiklayip indirin.
+
+7) Indirilen zip'i acin, icindeki .apk dosyasini telefonuniza
+   aktarip kurun.
+
+NOT: Depoyu "Public" yaptiginiz icin kod herkese acik olur (kisisel
+bilgi icermiyor, sadece uygulama kodu). Istemiyorsaniz "Private"
+da secebilirsiniz, GitHub Actions ucretsiz kotasi kisisel kullanim
+icin yeterlidir.
