@@ -733,7 +733,6 @@ class EvimApp(App):
                         font_size=fs(16), color=hex_rgba(th["text"]))
         box.add_widget(preview)
 
-        # Varsayılan değer tam 0'da durur (-100, 0, +100)
         current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1.0) * 100.0
         current_pct = max(-100, min(100, current_pct))
 
@@ -846,8 +845,6 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
-        # Klavye emoji ve kelime önerilerini aktif et
-        text_input.keyboard_suggestions = True
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
@@ -988,8 +985,7 @@ class EvimApp(App):
         self._results_box.bind(minimum_height=self._results_box.setter("height"))
         root.add_widget(self._results_box)
 
-        # Dikey ve yatay kaydırma çakışmalarını önlemek için nested_scroll ve eksen kilitleri
-        home_scroll = ScrollView(do_scroll_x=False, do_scroll_y=True, nested_scroll=True)
+        home_scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(10))
         content.bind(minimum_height=content.setter("height"))
 
@@ -1002,8 +998,7 @@ class EvimApp(App):
             fav_title.padding_x = dp(14)
             content.add_widget(fav_title)
 
-            # Eksen kilitli yatay kaydırma kutusu
-            fav_scroll = ScrollView(size_hint_y=None, height=dph(48), do_scroll_x=True, do_scroll_y=False, nested_scroll=True)
+            fav_scroll = ScrollView(size_hint_y=None, height=dph(48), do_scroll_x=True, do_scroll_y=False)
             fav_row = BoxLayout(size_hint=(None, None), height=dph(48), spacing=dp(8), padding=(dp(14), 0))
             fav_row.bind(minimum_width=fav_row.setter("width"))
             for row in favs:
@@ -1233,7 +1228,7 @@ class EvimApp(App):
         name_row.add_widget(info_dot)
         card.add_widget(name_row)
 
-        badge_scroll = ScrollView(size_hint_y=None, height=dph(18), do_scroll_x=True, do_scroll_y=False, bar_width=0, nested_scroll=True)
+        badge_scroll = ScrollView(size_hint_y=None, height=dph(18), do_scroll_x=True, do_scroll_y=False, bar_width=0)
         badge_row = BoxLayout(size_hint=(None, 1), spacing=dp(4))
         badge_row.bind(minimum_width=badge_row.setter("width"))
         badges = self.badges_for_item(row, th)
