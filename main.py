@@ -159,10 +159,14 @@ def fs(base):
 
 
 def dph(base):
+    """
+    Kutuların ve butonların yazı tipi ile %100 orantılı (lineer) ölçeklenmesini sağlar.
+    Böylece yazılar büyüdüğünde hiçbir zaman dışarı taşmaz.
+    """
     app = App.get_running_app()
     scale = app.font_scale if app else DEFAULT_FONT_SCALE
-    factor = 1 + (scale / DEFAULT_FONT_SCALE - 1) * 0.2
-    return dp(base * factor)
+    factor = scale / DEFAULT_FONT_SCALE
+    return dp(base * max(0.8, factor))
 
 
 def now_str():
@@ -606,9 +610,10 @@ class IconBtn(Button):
         kw.setdefault("background_down", "")
         kw.setdefault("background_color", (0, 0, 0, 0))
         kw.setdefault("size_hint", (None, None))
-        kw.setdefault("size", (dp(42), dp(42)))
-        kw.setdefault("font_size", fs(15))
         super().__init__(**kw)
+        # Font ve yükseklik ölçeklemesinin sorunsuz yansıması için dinamik bağlama
+        self.size = (dph(42), dph(42))
+        self.font_size = fs(15)
 
 
 class RoundActionButton(ButtonBehavior, Label):
@@ -723,11 +728,17 @@ class EvimApp(App):
     def open_font_size_dialog(self):
         th = self.theme()
         box = self.themed_box(orientation="vertical", spacing=dp(14), padding=dp(18))
-        box.add_widget(Label(text="Yazı Boyutu", size_hint_y=None, height=dph(30),
-                             bold=True, font_size=fs(16), color=hex_rgba(th["text"])))
-        box.add_widget(Label(text="0 = varsayılan boyut. Eksi küçültür, artı büyütür.",
-                             size_hint_y=None, height=dph(20), font_size=fs(11),
-                             color=hex_rgba(th["text_secondary"])))
+        
+        # Etiketlerin içeriğinin taşmaması için sarmalama (wrap) yapısı
+        title_lbl = Label(text="Yazı Boyutu", size_hint_y=None, bold=True, font_size=fs(16), color=hex_rgba(th["text"]))
+        title_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        title_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
+        box.add_widget(title_lbl)
+        
+        desc_lbl = Label(text="0 = varsayılan boyut. Eksi küçültür, artı büyütür.", size_hint_y=None, font_size=fs(11), color=hex_rgba(th["text_secondary"]))
+        desc_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        desc_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
+        box.add_widget(desc_lbl)
 
         preview = Label(text="Örnek Yazı Aa", size_hint_y=None, height=dph(50),
                         font_size=fs(16), color=hex_rgba(th["text"]))
@@ -845,6 +856,13 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
+        """
+        Klavye kelime önerisini (ve emojileri) Android'de çalışmaya zorlamak için,
+        eğer alan özellikle bir sayı filtresi içermiyorsa input_type='text' ayarlanır.
+        """
+        text_input.keyboard_suggestions = True
+        if not text_input.input_filter:
+            text_input.input_type = 'text'
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
@@ -1014,9 +1032,13 @@ class EvimApp(App):
         rooms_label_row.add_widget(Label(text="Odalar", font_size=fs(15), bold=True, color=hex_rgba(th["text"])))
         content.add_widget(rooms_label_row)
 
-        grid = GridLayout(cols=2, spacing=dp(14), padding=(dp(14), 0, dp(14), dp(90)), size_hint_y=None)
+        rooms = DB.get_rooms()
+        # Eğer sadece 1 adet oda varsa onu sola dayamak yerine geniş ve ortalanmış (cols=1) gösterir. 
+        # Daha fazla oda varsa cols=2 olarak yan yana simetrik dizer.
+        grid_cols = 1 if len(rooms) == 1 else 2
+        grid = GridLayout(cols=grid_cols, spacing=dp(14), padding=(dp(14), 0, dp(14), dp(90)), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
-        for rid, name, rtype, remoji, rphoto in DB.get_rooms():
+        for rid, name, rtype, remoji, rphoto in rooms:
             grid.add_widget(self._make_room_card(rid, name, rtype, remoji, rphoto))
         content.add_widget(grid)
 
@@ -1094,7 +1116,8 @@ class EvimApp(App):
         body = BoxLayout(orientation="vertical", size_hint_y=None, padding=(dp(8), dp(6)), spacing=dp(2))
         body.bind(minimum_height=body.setter("height"))
         name_lbl = ClickableLabel(text=name, color=hex_rgba(th["text"]), bold=True, font_size=fs(14),
-                                  size_hint_y=None, height=dph(20))
+                                  size_hint_y=None, height=dph(20), shorten=True, halign="center", valign="middle")
+        name_lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
         name_lbl.bind(on_release=lambda *a: self.enter_room(room_id, name))
         body.add_widget(name_lbl)
         item_count = len(DB.get_items(room_id, None))
@@ -1107,12 +1130,19 @@ class EvimApp(App):
     def open_room_detail(self, room_id, name, room_type):
         th = self.theme()
         box = self.themed_box(orientation="vertical", spacing=dp(8), padding=dp(16))
-        box.add_widget(Label(text=name, font_size=fs(18), bold=True, color=hex_rgba(th["text"]),
-                             size_hint_y=None, height=dph(30)))
+        
+        t_lbl = Label(text=name, font_size=fs(18), bold=True, color=hex_rgba(th["text"]), size_hint_y=None)
+        t_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        t_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
+        box.add_widget(t_lbl)
+        
         item_count = len(DB.get_items(room_id, None))
-        box.add_widget(Label(text=f"{item_count} eşya  ·  {ROOM_TYPES.get(room_type, ROOM_TYPES['diger'])[0]}",
-                             font_size=fs(13), color=hex_rgba(th["text_secondary"]),
-                             size_hint_y=None, height=dph(24)))
+        
+        s_lbl = Label(text=f"{item_count} eşya  ·  {ROOM_TYPES.get(room_type, ROOM_TYPES['diger'])[0]}",
+                      font_size=fs(13), color=hex_rgba(th["text_secondary"]), size_hint_y=None)
+        s_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        s_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
+        box.add_widget(s_lbl)
 
         actions = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
         actions.bind(minimum_height=actions.setter("height"))
@@ -1164,14 +1194,20 @@ class EvimApp(App):
         root.add_widget(info_row)
 
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
-        cols = 2 if self.view_mode == "grid" else 1
+        items = DB.get_items(room_id, parent_id)
+        
+        # Eğer listede 1 adet ürün varsa görünümü full-width yaparak düzgün merkezleme sağlar
+        cols = 1 if (self.view_mode == "list" or len(items) == 1) else 2
         grid = GridLayout(cols=cols, spacing=dp(14), padding=(dp(14), dp(6), dp(14), dp(90)), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
-        items = DB.get_items(room_id, parent_id)
+        
         if not items:
             empty = Label(text="Henüz eşya eklenmedi.\nSağ alttaki + ile ekleyin.",
-                          color=hex_rgba(th["text_secondary"]), size_hint_y=None, height=dph(80), font_size=fs(14))
+                          color=hex_rgba(th["text_secondary"]), size_hint_y=None, font_size=fs(14))
+            empty.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+            empty.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(60)))
             grid.add_widget(empty)
+            
         for row in items:
             grid.add_widget(self._make_item_card(row, list_mode=(self.view_mode == "list")))
         scroll.add_widget(grid)
@@ -1246,8 +1282,11 @@ class EvimApp(App):
         child_count = DB.count_children(item_id)
 
         box = self.themed_box(orientation="vertical", spacing=dp(8), padding=dp(16))
-        box.add_widget(Label(text=name, font_size=fs(18), bold=True, color=hex_rgba(th["text"]),
-                             size_hint_y=None, height=dph(30)))
+        
+        t_lbl = Label(text=name, font_size=fs(18), bold=True, color=hex_rgba(th["text"]), size_hint_y=None)
+        t_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        t_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
+        box.add_widget(t_lbl)
 
         lbl_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text_secondary"])[:3])
         val_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text"])[:3])
@@ -1355,8 +1394,10 @@ class EvimApp(App):
         box.bind(minimum_height=box.setter("height"))
         rows = DB.get_history()
         if not rows:
-            box.add_widget(Label(text="Henüz silinen bir şey yok.", size_hint_y=None, height=dph(40),
-                                 color=hex_rgba(th["text_secondary"])))
+            empty_lbl = Label(text="Henüz silinen bir şey yok.", size_hint_y=None, font_size=fs(14), color=hex_rgba(th["text_secondary"]))
+            empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+            empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
+            box.add_widget(empty_lbl)
         for hid, kind, name, path_text, deleted_at, restore_data in rows:
             row_box = RoundedCard(orientation="horizontal", size_hint_y=None, height=dph(60),
                                   padding=dp(8), spacing=dp(8), bg_color=hex_rgba(th["surface"]))
@@ -1391,15 +1432,20 @@ class EvimApp(App):
         box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(10))
         box.bind(minimum_height=box.setter("height"))
 
-        box.add_widget(Label(text="Mevcut stoğu, belirlediğiniz minimum stoğun altına düşen veya tükenen ürünler:",
-                             size_hint_y=None, height=dph(36), font_size=fs(12),
-                             color=hex_rgba(th["text_secondary"])))
+        info_lbl = Label(text="Mevcut stoğu, belirlediğiniz minimum stoğun altına düşen veya tükenen ürünler:",
+                         size_hint_y=None, font_size=fs(12), color=hex_rgba(th["text_secondary"]), halign="left")
+        info_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        info_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(info_lbl)
 
         rows = DB.get_low_stock_items()
         if not rows:
-            box.add_widget(Label(text="Harika! Stoğu azalan veya tükenen hiçbir ürün bulunmuyor.",
-                                 size_hint_y=None, height=dph(60), font_size=fs(13),
-                                 color=hex_rgba(th["ok"])))
+            empty_lbl = Label(text="Harika! Stoğu azalan veya tükenen hiçbir ürün bulunmuyor.",
+                              size_hint_y=None, font_size=fs(13), color=hex_rgba(th["ok"]), halign="left")
+            empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+            empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
+            box.add_widget(empty_lbl)
+            
         for row in rows:
             item_id, name, cat, _, _, _, _, qty, qty_min, _, _, _, _, _, _, room_id, _, _, _ = row
             path = DB.get_path(item_id)
@@ -1443,8 +1489,10 @@ class EvimApp(App):
         box.bind(minimum_height=box.setter("height"))
         rows = DB.flagged_items(field)
         if not rows:
-            box.add_widget(Label(text="Liste boş.", size_hint_y=None, height=dph(40),
-                                 color=hex_rgba(th["text_secondary"])))
+            empty_lbl = Label(text="Liste boş.", size_hint_y=None, font_size=fs(14), color=hex_rgba(th["text_secondary"]))
+            empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+            empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
+            box.add_widget(empty_lbl)
         for row in rows:
             item_id, name = row[0], row[1]
             path = DB.get_path(item_id)
@@ -1470,15 +1518,21 @@ class EvimApp(App):
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
         box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(10))
         box.bind(minimum_height=box.setter("height"))
-        box.add_widget(Label(text="Kutuların 'Düzenle' ekranından bir Koli No girin;\nburada numaraya göre listelenir.",
-                             size_hint_y=None, height=dph(50), font_size=fs(12),
-                             color=hex_rgba(th["text_secondary"])))
+        
+        info_lbl = Label(text="Kutuların 'Düzenle' ekranından bir Koli No girin;\nburada numaraya göre listelenir.",
+                         size_hint_y=None, font_size=fs(12), color=hex_rgba(th["text_secondary"]), halign="left")
+        info_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        info_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(info_lbl)
+        
         c = DB.conn.cursor()
         c.execute(f"SELECT {DB.ITEM_COLS} FROM items WHERE move_no > 0 ORDER BY move_no")
         rows = c.fetchall()
         if not rows:
-            box.add_widget(Label(text="Henüz koli numarası atanmamış.", size_hint_y=None, height=dph(40),
-                                 color=hex_rgba(th["text_secondary"])))
+            empty_lbl = Label(text="Henüz koli numarası atanmamış.", size_hint_y=None, font_size=fs(14), color=hex_rgba(th["text_secondary"]))
+            empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+            empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
+            box.add_widget(empty_lbl)
         for row in rows:
             item_id, name, move_no = row[0], row[1], row[13]
             btn = Button(text=f"Koli #{move_no} — {name}", size_hint_y=None, height=dph(44),
@@ -1519,8 +1573,13 @@ class EvimApp(App):
         th = self.theme()
         self._managed_inputs = []
         box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
-        box.add_widget(Label(text="Odayı Düzenle" if edit_room_id else "Yeni Oda Ekle",
-                             size_hint_y=None, height=dph(28), bold=True, font_size=fs(16)))
+        
+        lbl = Label(text="Odayı Düzenle" if edit_room_id else "Yeni Oda Ekle",
+                    size_hint_y=None, bold=True, font_size=fs(16), color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
+        
         field = TextInput(hint_text="Oda adı (örn: Salon, Mutfak 🏠)", multiline=False,
                           size_hint_y=None, height=dph(46), font_size=fs(15))
         self.fix_focus(field)
@@ -1581,7 +1640,11 @@ class EvimApp(App):
 
     def _confirm_delete_room(self, room_id, name):
         box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
-        box.add_widget(Label(text=f"'{name}' odası ve içindeki tüm eşyalar silinsin mi?", font_size=fs(14)))
+        
+        lbl = Label(text=f"'{name}' odası ve içindeki tüm eşyalar silinsin mi?", font_size=fs(14), size_hint_y=None, color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
 
         def do_delete(*a):
             DB.delete_room(room_id)
@@ -1593,7 +1656,11 @@ class EvimApp(App):
 
     def _confirm_empty_box(self, item_id, name):
         box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
-        box.add_widget(Label(text=f"'{name}' içindeki tüm öğeler bir üst seviyeye taşınsın mı?", font_size=fs(14)))
+        
+        lbl = Label(text=f"'{name}' içindeki tüm öğeler bir üst seviyeye taşınsın mı?", font_size=fs(14), size_hint_y=None, color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
 
         def do_empty(*a):
             DB.empty_box(item_id)
@@ -1606,8 +1673,12 @@ class EvimApp(App):
     def open_move_dialog(self, item_id):
         th = self.theme()
         box = self.themed_box(orientation="vertical", spacing=dp(8), padding=dp(14))
-        box.add_widget(Label(text="Hangi odaya taşınsın?", size_hint_y=None, height=dph(28), bold=True,
-                             font_size=fs(15), color=hex_rgba(th["text"])))
+        
+        lbl = Label(text="Hangi odaya taşınsın?", size_hint_y=None, bold=True, font_size=fs(15), color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
+        
         inner = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(4))
         inner.bind(minimum_height=inner.setter("height"))
         popup_holder = {}
@@ -1639,11 +1710,14 @@ class EvimApp(App):
         box = self.themed_box(orientation="vertical", spacing=dp(8), padding=dp(14), size_hint_y=None)
         box.bind(minimum_height=box.setter("height"))
 
-        box.add_widget(Label(text="Eşyayı Düzenle" if edit_id else "Yeni Eşya Ekle",
-                             size_hint_y=None, height=dph(30), bold=True, font_size=fs(16)))
+        lbl = Label(text="Eşyayı Düzenle" if edit_id else "Yeni Eşya Ekle",
+                    size_hint_y=None, bold=True, font_size=fs(16), color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
 
-        def field(hint, h=dp(46)):
-            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=h, font_size=fs(14))
+        def field(hint, h=46):
+            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14))
             self.fix_focus(t)
             box.add_widget(t)
             return t
@@ -1690,7 +1764,7 @@ class EvimApp(App):
 
         loaned_field = field("Ödünç verildiyse kime (isteğe bağlı)")
 
-        qty_row = BoxLayout(size_hint_y=None, height=dph(34), spacing=dp(6))
+        qty_row = BoxLayout(size_hint_y=None, height=dph(38), spacing=dp(6))
         qty_field = self.fix_focus(TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int"))
         qty_min_field = self.fix_focus(TextInput(hint_text="Min. stok uyarısı", multiline=False, font_size=fs(13), input_filter="int"))
         qty_row.add_widget(qty_field)
@@ -1790,8 +1864,12 @@ class EvimApp(App):
         room_id, parent_id, title, breadcrumb = self.nav_stack[-1]
         path = breadcrumb + "  ›  " + name
         box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
-        box.add_widget(Label(text=f"'{name}' silinsin mi?\n(İçindeki eşyalar da silinir, Geçmiş'ten geri getirilebilir)",
-                             font_size=fs(13)))
+        
+        lbl = Label(text=f"'{name}' silinsin mi?\n(İçindeki eşyalar da silinir, Geçmiş'ten geri getirilebilir)",
+                    font_size=fs(13), size_hint_y=None, color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
 
         def do_delete(*a):
             DB.delete_item(item_id, path)
