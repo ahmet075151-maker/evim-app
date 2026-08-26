@@ -71,10 +71,6 @@ def save_font_scale(value):
 
 
 def get_export_path():
-    # Uygulamanın kendi özel (izin istemeyen) klasörüne yazar; Android'de
-    # paylaşılan depolamaya yazmak ekstra çalışma zamanı izni gerektirdiği
-    # için (ve APK derlemesini karmaşıklaştırmamak için) bilinçli olarak
-    # özel depolama kullanılıyor.
     return os.path.dirname(get_db_path())
 
 
@@ -146,16 +142,12 @@ DEFAULT_FONT_SCALE = 1.3
 
 
 def fs(base):
-    """Metin boyutunu kullanıcının seçtiği 'Yazı Boyutu' ayarına göre
-    ölçekler. Uygulamanın her yerinde font_size yerine bu kullanılır."""
     app = App.get_running_app()
     scale = app.font_scale if app else DEFAULT_FONT_SCALE
     return base * scale
 
 
 def dph(base):
-    """Satır/kart/buton yüksekliklerini yazı boyutu ayarına göre büyütür
-    (böylece büyük yazı hiçbir zaman kutunun dışına taşmaz/kesilmez)."""
     app = App.get_running_app()
     scale = app.font_scale if app else DEFAULT_FONT_SCALE
     factor = 1 + (scale - 1) * 0.2
@@ -491,8 +483,6 @@ def _star_points(cx, cy, r_outer, r_inner, rotation=90):
 
 
 class RoomIcon(Widget):
-    """Oda türüne göre elle çizilmiş vektör simge (yazı tipine bağlı
-    değildir, bu yüzden hiçbir cihazda bozulmaz/taşmaz)."""
     bg_color = ListProperty([1, 1, 1, 1])
     icon_key = StringProperty("diger")
 
@@ -511,9 +501,6 @@ class RoomIcon(Widget):
             Color(rgba=self.bg_color)
             RoundedRectangle(pos=(x, y), size=(w, h), radius=[dp(18), dp(18), 0, 0])
 
-        # simge, kenarlara asla değmeyecek şekilde ortalanmış KARE bir
-        # kutu içinde çizilir (dikdörtgen kutu kullanılırsa simge yanlara
-        # doğru gerilmiş görünüyordu, bu yüzden kare sabitlendi)
         box_size = min(w, h) * 0.62
         bx = x + (w - box_size) / 2
         by = y + (h - box_size) / 2
@@ -570,8 +557,6 @@ class RoomIcon(Widget):
 
 
 class ColorDot(Widget):
-    """Kategoriyi belirten küçük renk noktası (büyük, ortada yüzen daire
-    rozetinin yerine geçti)."""
     dot_color = ListProperty([1, 1, 1, 1])
 
     def __init__(self, **kw):
@@ -593,7 +578,6 @@ class _ClickableRoomIcon(ButtonBehavior, RoomIcon):
 
 
 class _EmojiCover(ButtonBehavior, BoxLayout):
-    """Emoji ile gösterilen, tıklanabilir oda kapağı."""
     bg_color = ListProperty([1, 1, 1, 1])
     emoji_text = StringProperty("")
 
@@ -629,8 +613,6 @@ class IconBtn(Button):
 
 
 class RoundActionButton(ButtonBehavior, Label):
-    """Yuvarlak köşeli, düz Kivy Button'dan daha modern görünen aksiyon
-    butonu (Düzenle/Taşı/Sil vb. için)."""
     bg_color = ListProperty([1, 1, 1, 1])
 
     def __init__(self, **kw):
@@ -716,7 +698,7 @@ class EvimApp(App):
         return self.sm
 
     def _on_keyboard(self, window, key, *args):
-        if key == 27:  # Android geri tuşu / ESC
+        if key == 27: 
             if self._active_popup is not None:
                 try:
                     self._active_popup.dismiss()
@@ -750,9 +732,11 @@ class EvimApp(App):
                         font_size=fs(16), color=hex_rgba(th["text"]))
         box.add_widget(preview)
 
-        current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1) * 100
-        current_pct = max(-100, min(200, current_pct))
-        slider = Slider(min=-100, max=200, value=current_pct, step=5, size_hint_y=None, height=dph(40))
+        # 0'dan başlayıp -100 veya +100 olacak şekilde ayarlandı
+        current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1) * 120
+        current_pct = max(-100, min(100, current_pct))
+        
+        slider = Slider(min=-100, max=100, value=current_pct, step=5, size_hint_y=None, height=dph(40))
         box.add_widget(slider)
 
         pct_lbl = Label(text=f"{int(current_pct):+d}", size_hint_y=None, height=dph(26),
@@ -760,7 +744,7 @@ class EvimApp(App):
         box.add_widget(pct_lbl)
 
         def pct_to_scale(pct):
-            return max(0.8, min(DEFAULT_FONT_SCALE * 3, DEFAULT_FONT_SCALE * (1 + pct / 130)))
+            return max(0.4, min(DEFAULT_FONT_SCALE * 3, DEFAULT_FONT_SCALE * (1 + pct / 120)))
 
         def on_slide(instance, value):
             pct_lbl.text = f"{int(value):+d}"
@@ -858,11 +842,6 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
-        """Android'de bazı cihazlarda arka arkaya birden fazla TextInput
-        olduğunda ilk dokunuş klavyeyi açmıyor (bilinen Kivy/Android
-        zamanlama sorunu). Aynı diyalogdaki DİĞER tüm alanların odağını
-        hemen bırakıp, dokunulan alana kısa bir gecikmeyle odaklanarak
-        Android'in klavyeyi güvenilir şekilde göstermesini sağlıyoruz."""
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
@@ -880,10 +859,6 @@ class EvimApp(App):
         return text_input
 
     def themed_box(self, **kw):
-        """Popup içerikleri için tema rengiyle dolu bir kutu.
-        Kivy'nin varsayılan Popup zemini tema ile uyuşmayabildiğinden
-        (açık modda metnin görünmez olmasına yol açan hata buydu) her
-        popup içeriği artık kendi zemin rengini taşıyor."""
         th = self.theme()
         box = BoxLayout(**kw)
         with box.canvas.before:
@@ -897,9 +872,6 @@ class EvimApp(App):
         return box
 
     def open_auto_popup(self, title, inner_box, buttons_row=None, max_frac=0.94, scrollable=True):
-        """Popup'ı İÇERİĞİN gerçek yüksekliğine göre otomatik boyutlandırır.
-        Yazı boyutu ayarı büyütülse de küçültülse de pencere her zaman
-        içeriğe tam oturur, ekrana sığmayan kısımlar kaydırılabilir olur."""
         th = self.theme()
         inner_box.size_hint_y = None
         inner_box.bind(minimum_height=inner_box.setter("height"))
@@ -974,7 +946,11 @@ class EvimApp(App):
             badges.append(("Stok Azaldı", th["danger"]))
         if expiry:
             try:
-                d = datetime.datetime.strptime(expiry, "%d.%m.%Y")
+                # İleriye/Geriye dönük uyumluluk için hem / hem de . formatını dener
+                try:
+                    d = datetime.datetime.strptime(expiry, "%d/%m/%Y")
+                except ValueError:
+                    d = datetime.datetime.strptime(expiry, "%d.%m.%Y")
                 delta = (d - datetime.datetime.now()).days
                 if delta < 0:
                     badges.append(("Süresi Doldu", th["danger"]))
@@ -1249,9 +1225,6 @@ class EvimApp(App):
         name_row.add_widget(info_dot)
         card.add_widget(name_row)
 
-        # Rozet satırı her zaman aynı yükseklikte ayrılır (boş olsa bile),
-        # böylece tüm kartlar içerikten bağımsız aynı boyutta olur. Kaydırılabilir
-        # olduğundan rozetler kartın dışına taşmaz.
         badge_scroll = ScrollView(size_hint_y=None, height=dph(18), do_scroll_y=False, bar_width=0)
         badge_row = BoxLayout(size_hint=(None, 1), spacing=dp(4))
         badge_row.bind(minimum_width=badge_row.setter("width"))
@@ -1647,14 +1620,36 @@ class EvimApp(App):
         note_field = field("Not (isteğe bağlı)")
         price_field = field("Fiyat / değer (TL, isteğe bağlı)")
         price_field.input_filter = "float"
-        expiry_field = field("Son kullanma / garanti tarihi (GG.AA.YYYY, isteğe bağlı)")
+        
+        # --- Tarih Formatı Değişikliği ve Sadece Sayı Girişi ---
+        expiry_field = field("Son kullanma / garanti (GG/AA/YYYY, isteğe bağlı)")
+        def on_expiry_text(instance, value):
+            digits = ''.join([c for c in value if c.isdigit()])
+            digits = digits[:8] # En fazla 8 rakam (GG+AA+YYYY)
+            formatted = ''
+            for i, d in enumerate(digits):
+                if i == 2 or i == 4:
+                    formatted += '/'
+                formatted += d
+            if instance.text != formatted:
+                instance.text = formatted
+                # İmlecin en sona gitmesini sağlamak için ufak bir Kivy zamanlaması:
+                def set_cursor(dt):
+                    instance.cursor = (len(instance.text), 0)
+                Clock.schedule_once(set_cursor, 0)
+                
+        expiry_field.bind(text=on_expiry_text)
+        
         loaned_field = field("Ödünç verildiyse kime (isteğe bağlı)")
-        qty_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(6))
-        qty_field = self.fix_focus(TextInput(hint_text="Miktar", multiline=False, font_size=fs(14), input_filter="int"))
-        qty_min_field = self.fix_focus(TextInput(hint_text="Min. stok uyarısı", multiline=False, font_size=fs(14), input_filter="int"))
+        
+        # --- Miktar Kutucukları Boyutu Küçültme ---
+        qty_row = BoxLayout(size_hint_y=None, height=dph(34), spacing=dp(6))
+        qty_field = self.fix_focus(TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int"))
+        qty_min_field = self.fix_focus(TextInput(hint_text="Min. stok uyarısı", multiline=False, font_size=fs(13), input_filter="int"))
         qty_row.add_widget(qty_field)
         qty_row.add_widget(qty_min_field)
         box.add_widget(qty_row)
+        
         tags_field = field("Etiketler (virgülle, örn: kışlık,kırılacak)")
         move_field = field("Taşınma koli no (isteğe bağlı)")
         move_field.input_filter = "int"
