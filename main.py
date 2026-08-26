@@ -159,10 +159,6 @@ def fs(base):
 
 
 def dph(base):
-    """
-    Kutuların ve butonların yazı tipi ile %100 orantılı (lineer) ölçeklenmesini sağlar.
-    Böylece yazılar büyüdüğünde hiçbir zaman dışarı taşmaz.
-    """
     app = App.get_running_app()
     scale = app.font_scale if app else DEFAULT_FONT_SCALE
     factor = scale / DEFAULT_FONT_SCALE
@@ -611,7 +607,6 @@ class IconBtn(Button):
         kw.setdefault("background_color", (0, 0, 0, 0))
         kw.setdefault("size_hint", (None, None))
         super().__init__(**kw)
-        # Font ve yükseklik ölçeklemesinin sorunsuz yansıması için dinamik bağlama
         self.size = (dph(42), dph(42))
         self.font_size = fs(15)
 
@@ -729,7 +724,6 @@ class EvimApp(App):
         th = self.theme()
         box = self.themed_box(orientation="vertical", spacing=dp(14), padding=dp(18))
         
-        # Etiketlerin içeriğinin taşmaması için sarmalama (wrap) yapısı
         title_lbl = Label(text="Yazı Boyutu", size_hint_y=None, bold=True, font_size=fs(16), color=hex_rgba(th["text"]))
         title_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
         title_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
@@ -856,13 +850,6 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
-        """
-        Klavye kelime önerisini (ve emojileri) Android'de çalışmaya zorlamak için,
-        eğer alan özellikle bir sayı filtresi içermiyorsa input_type='text' ayarlanır.
-        """
-        text_input.keyboard_suggestions = True
-        if not text_input.input_filter:
-            text_input.input_type = 'text'
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
@@ -1033,8 +1020,6 @@ class EvimApp(App):
         content.add_widget(rooms_label_row)
 
         rooms = DB.get_rooms()
-        # Eğer sadece 1 adet oda varsa onu sola dayamak yerine geniş ve ortalanmış (cols=1) gösterir. 
-        # Daha fazla oda varsa cols=2 olarak yan yana simetrik dizer.
         grid_cols = 1 if len(rooms) == 1 else 2
         grid = GridLayout(cols=grid_cols, spacing=dp(14), padding=(dp(14), 0, dp(14), dp(90)), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
@@ -1196,7 +1181,6 @@ class EvimApp(App):
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
         items = DB.get_items(room_id, parent_id)
         
-        # Eğer listede 1 adet ürün varsa görünümü full-width yaparak düzgün merkezleme sağlar
         cols = 1 if (self.view_mode == "list" or len(items) == 1) else 2
         grid = GridLayout(cols=cols, spacing=dp(14), padding=(dp(14), dp(6), dp(14), dp(90)), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
@@ -1580,7 +1564,7 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
         
-        field = TextInput(hint_text="Oda adı (örn: Salon, Mutfak 🏠)", multiline=False,
+        field = TextInput(hint_text="Oda adı (örn: Salon, Mutfak)", multiline=False,
                           size_hint_y=None, height=dph(46), font_size=fs(15))
         self.fix_focus(field)
         box.add_widget(field)
@@ -1722,7 +1706,7 @@ class EvimApp(App):
             box.add_widget(t)
             return t
 
-        name_field = field("Eşya adı (örn: Kanepe, Kutu 📦)")
+        name_field = field("Eşya adı (örn: Kanepe, Kutu)")
 
         self._selected_category = ITEM_CATEGORIES[-1]
         cat_btn = Button(text=self._selected_category, size_hint_y=None, height=dph(46),
