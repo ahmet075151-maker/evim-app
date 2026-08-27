@@ -499,7 +499,7 @@ def _star_points(cx, cy, r_outer, r_inner, rotation=90):
     return pts
 
 
-# RoomIcon sınıfı Göreceli Koordinatlara geçirildi (Kaydırma esnasında havada kalmaları engeller)
+# HATA ÇÖZÜMÜ: RoomIcon'un render motorunu canvas'ı bozmayacak şekilde sabitledim
 class RoomIcon(RelativeLayout):
     bg_color = ListProperty([1, 1, 1, 1])
     icon_key = StringProperty("diger")
@@ -510,23 +510,23 @@ class RoomIcon(RelativeLayout):
         self._redraw()
 
     def _redraw(self, *a):
-        self.canvas.before.clear()
+        # canvas.before yerine ana canvas temizlenir. (Matrisi silmez!)
+        self.canvas.clear()
         w, h = self.width, self.height
         if w <= 0 or h <= 0:
             return
         
-        with self.canvas.before:
+        with self.canvas:
             Color(rgba=self.bg_color)
             RoundedRectangle(pos=(0, 0), size=(w, h), radius=[dp(18), dp(18), 0, 0])
 
-        box_size = min(w, h) * 0.62
-        bx = (w - box_size) / 2
-        by = (h - box_size) / 2
-        bw = bh = box_size
-        lw = max(dp(2.2), bh * 0.06)
-        key = self.icon_key
-        
-        with self.canvas.before:
+            box_size = min(w, h) * 0.62
+            bx = (w - box_size) / 2
+            by = (h - box_size) / 2
+            bw = bh = box_size
+            lw = max(dp(2.2), bh * 0.06)
+            key = self.icon_key
+            
             Color(1, 1, 1, 0.95)
             if key == "mutfak":
                 RoundedRectangle(pos=(bx, by), size=(bw, bh * 0.55), radius=[dp(4)])
@@ -585,7 +585,7 @@ class _EmojiCover(ButtonBehavior, RelativeLayout):
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        with self.canvas.before:
+        with self.canvas:
             self._color = Color(rgba=self.bg_color)
             self._rect = RoundedRectangle(pos=(0, 0), size=self.size, radius=[dp(18), dp(18), 0, 0])
         self.bind(size=self._update_rect, bg_color=self._update_color)
@@ -740,7 +740,6 @@ class EvimApp(App):
                         font_size=fs(16), color=hex_rgba(th["text"]))
         box.add_widget(preview)
 
-        # Matematiksel uyuşmazlık tamamen düzeltildi
         current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1.0) * 200.0
         current_pct = max(-100, min(100, current_pct))
 
@@ -818,7 +817,6 @@ class EvimApp(App):
     def open_main_menu(self, caller):
         th = self.theme()
         dropdown = DropDown(auto_width=False, width=dph(260))
-        # Hatalı kelimeler menülerden temizlendi
         entries = [
             ("Ana ekrana dön / Ara", self.go_home),
             ("Alışveriş / Eksik Listesi", self.open_shopping_list),
