@@ -28,6 +28,7 @@ from kivy.uix.image import Image
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.widget import Widget
 from kivy.uix.slider import Slider
+from kivy.uix.relativelayout import RelativeLayout
 from kivy.lang import Builder
 from kivy.utils import platform, get_color_from_hex
 from kivy.clock import Clock
@@ -498,31 +499,33 @@ def _star_points(cx, cy, r_outer, r_inner, rotation=90):
     return pts
 
 
-class RoomIcon(Widget):
+# RoomIcon sınıfı Göreceli Koordinatlara geçirildi (Kaydırma esnasında havada kalmaları engeller)
+class RoomIcon(RelativeLayout):
     bg_color = ListProperty([1, 1, 1, 1])
     icon_key = StringProperty("diger")
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.bind(pos=self._redraw, size=self._redraw,
-                  bg_color=self._redraw, icon_key=self._redraw)
+        self.bind(size=self._redraw, bg_color=self._redraw, icon_key=self._redraw)
         self._redraw()
 
     def _redraw(self, *a):
         self.canvas.before.clear()
-        x, y, w, h = self.x, self.y, self.width, self.height
+        w, h = self.width, self.height
         if w <= 0 or h <= 0:
             return
+        
         with self.canvas.before:
             Color(rgba=self.bg_color)
-            RoundedRectangle(pos=(x, y), size=(w, h), radius=[dp(18), dp(18), 0, 0])
+            RoundedRectangle(pos=(0, 0), size=(w, h), radius=[dp(18), dp(18), 0, 0])
 
         box_size = min(w, h) * 0.62
-        bx = x + (w - box_size) / 2
-        by = y + (h - box_size) / 2
+        bx = (w - box_size) / 2
+        by = (h - box_size) / 2
         bw = bh = box_size
         lw = max(dp(2.2), bh * 0.06)
         key = self.icon_key
+        
         with self.canvas.before:
             Color(1, 1, 1, 0.95)
             if key == "mutfak":
@@ -576,7 +579,7 @@ class _ClickableRoomIcon(ButtonBehavior, RoomIcon):
     pass
 
 
-class _EmojiCover(ButtonBehavior, BoxLayout):
+class _EmojiCover(ButtonBehavior, RelativeLayout):
     bg_color = ListProperty([1, 1, 1, 1])
     emoji_text = StringProperty("")
 
@@ -584,12 +587,11 @@ class _EmojiCover(ButtonBehavior, BoxLayout):
         super().__init__(**kw)
         with self.canvas.before:
             self._color = Color(rgba=self.bg_color)
-            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(18), dp(18), 0, 0])
-        self.bind(pos=self._update_rect, size=self._update_rect, bg_color=self._update_color)
+            self._rect = RoundedRectangle(pos=(0, 0), size=self.size, radius=[dp(18), dp(18), 0, 0])
+        self.bind(size=self._update_rect, bg_color=self._update_color)
         self.add_widget(Label(text=self.emoji_text, font_size=dp(42)))
 
     def _update_rect(self, *a):
-        self._rect.pos = self.pos
         self._rect.size = self.size
 
     def _update_color(self, *a):
@@ -738,7 +740,8 @@ class EvimApp(App):
                         font_size=fs(16), color=hex_rgba(th["text"]))
         box.add_widget(preview)
 
-        current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1.0) * 100.0
+        # Matematiksel uyuşmazlık tamamen düzeltildi
+        current_pct = (self.font_scale / DEFAULT_FONT_SCALE - 1.0) * 200.0
         current_pct = max(-100, min(100, current_pct))
 
         slider = Slider(min=-100, max=100, value=current_pct, step=1, size_hint_y=None, height=dph(40))
@@ -749,7 +752,7 @@ class EvimApp(App):
         box.add_widget(pct_lbl)
 
         def pct_to_scale(pct):
-            return DEFAULT_FONT_SCALE * (1.0 + (pct / 100.0) * 0.5)
+            return DEFAULT_FONT_SCALE * (1.0 + (pct / 200.0))
 
         def on_slide(instance, value):
             pct_lbl.text = f"{int(round(value)):+d}"
@@ -815,14 +818,15 @@ class EvimApp(App):
     def open_main_menu(self, caller):
         th = self.theme()
         dropdown = DropDown(auto_width=False, width=dph(260))
+        # Hatalı kelimeler menülerden temizlendi
         entries = [
             ("Ana ekrana dön / Ara", self.go_home),
-            ("🛒 Alışveriş / Eksik Listesi", self.open_shopping_list),
+            ("Alışveriş / Eksik Listesi", self.open_shopping_list),
             ("Silinenler Geçmişi", self.open_history),
             ("Satılık / Bağış Listesi", lambda: self.open_flag_list("is_sell", "Satılık / Bağış Listesi")),
             ("Kayıp Eşyalar", lambda: self.open_flag_list("is_lost", "Kayıp Eşyalar")),
             ("Taşınma Modu", self.open_move_mode),
-            ("CSV Dışa Aktar (Download)", self.do_export_csv),
+            ("CSV Dışa Aktar", self.do_export_csv),
             ("Yazı Boyutu Ayarı", self.open_font_size_dialog),
             ("Misafir Modu Aç/Kapat", self.toggle_guest),
         ]
@@ -850,6 +854,9 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
+        text_input.keyboard_suggestions = True
+        if not text_input.input_filter:
+            text_input.input_type = 'text'
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
