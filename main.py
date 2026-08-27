@@ -499,7 +499,6 @@ def _star_points(cx, cy, r_outer, r_inner, rotation=90):
     return pts
 
 
-# HATA ÇÖZÜMÜ: RoomIcon'un render motorunu canvas'ı bozmayacak şekilde sabitledim
 class RoomIcon(RelativeLayout):
     bg_color = ListProperty([1, 1, 1, 1])
     icon_key = StringProperty("diger")
@@ -510,7 +509,6 @@ class RoomIcon(RelativeLayout):
         self._redraw()
 
     def _redraw(self, *a):
-        # canvas.before yerine ana canvas temizlenir. (Matrisi silmez!)
         self.canvas.clear()
         w, h = self.width, self.height
         if w <= 0 or h <= 0:
@@ -852,9 +850,8 @@ class EvimApp(App):
     _managed_inputs = []
 
     def fix_focus(self, text_input):
-        text_input.keyboard_suggestions = True
-        if not text_input.input_filter:
-            text_input.input_type = 'text'
+        # Kivy motorunda yazilarin kopyalanmasini engellemek icin klavye onbelleklemesi kesin olarak kaldirildi
+        text_input.keyboard_suggestions = False
         self._managed_inputs.append(text_input)
 
         def on_touch_down(instance, touch):
@@ -985,7 +982,8 @@ class EvimApp(App):
                                        background_color=hex_rgba(th["surface2"]),
                                        foreground_color=hex_rgba(th["text"]),
                                        hint_text_color=hex_rgba(th["text_secondary"]),
-                                       cursor_color=hex_rgba(th["primary"]))
+                                       cursor_color=hex_rgba(th["primary"]),
+                                       keyboard_suggestions=False)
         self.fix_focus(self._search_input)
         self._search_input.bind(text=self._on_search_text)
         search_row.add_widget(self._search_input)
@@ -1570,7 +1568,7 @@ class EvimApp(App):
         box.add_widget(lbl)
         
         field = TextInput(hint_text="Oda adı (örn: Salon, Mutfak)", multiline=False,
-                          size_hint_y=None, height=dph(46), font_size=fs(15))
+                          size_hint_y=None, height=dph(46), font_size=fs(15), keyboard_suggestions=False)
         self.fix_focus(field)
         box.add_widget(field)
 
@@ -1706,7 +1704,7 @@ class EvimApp(App):
         box.add_widget(lbl)
 
         def field(hint, h=46):
-            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14))
+            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14), keyboard_suggestions=False)
             self.fix_focus(t)
             box.add_widget(t)
             return t
@@ -1754,8 +1752,8 @@ class EvimApp(App):
         loaned_field = field("Ödünç verildiyse kime (isteğe bağlı)")
 
         qty_row = BoxLayout(size_hint_y=None, height=dph(38), spacing=dp(6))
-        qty_field = self.fix_focus(TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int"))
-        qty_min_field = self.fix_focus(TextInput(hint_text="Min. stok uyarısı", multiline=False, font_size=fs(13), input_filter="int"))
+        qty_field = self.fix_focus(TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False))
+        qty_min_field = self.fix_focus(TextInput(hint_text="Min. stok uyarısı", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False))
         qty_row.add_widget(qty_field)
         qty_row.add_widget(qty_min_field)
         box.add_widget(qty_row)
