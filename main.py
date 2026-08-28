@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Modern & Optimize Sürüm)
+EVİM - Ev Eşya Envanteri Uygulaması (Stabil, Çökme Korumalı Sürüm)
 """
 
 import os
@@ -117,7 +117,6 @@ CATEGORY_INFO = {
 ITEM_CATEGORIES = list(CATEGORY_INFO.keys())
 UNIT_TYPES = ["Adet", "Kutu", "Kg", "Litre", "Paket", "Çuval", "Şişe"]
 
-# Yeni 10 Farklı Renk Teması Menüsü
 THEMES = {
     "orijinal": {
         "name": "Orijinal Turuncu",
@@ -583,13 +582,14 @@ class SoftShadowCard(BoxLayout):
     def _update_color(self, *a):
         self._main_color.rgba = self.bg_color
 
-# Gelişmiş çökme-korumalı Uzun Basma Algılayıcısı
+# Korumalı ve Hatasız Basılı Tutma Sistemi
 class LongPressButtonBehavior(ButtonBehavior):
     __events__ = ('on_long_press',)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._lp_event = None
+        self._long_pressed = False
 
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
@@ -601,9 +601,11 @@ class LongPressButtonBehavior(ButtonBehavior):
         if self._lp_event:
             self._lp_event.cancel()
             self._lp_event = None
-        if getattr(self, '_long_pressed', False):
+        if self._long_pressed:
             self._long_pressed = False
             self.state = 'normal'
+            if touch.grab_current is self:
+                touch.ungrab(self)
             return True
         return super().on_touch_up(touch)
 
@@ -773,28 +775,25 @@ class Badge(Label):
         self._rect.pos = self.pos
         self._rect.size = self.size
 
-# Metin Hatasını Engellemek İçin Gelişmiş FAB
-class FAB(ButtonBehavior, Label):
+# Metin ve Gölge Hatasını Engelleyen Temiz FAB Butonu
+class FAB(ButtonBehavior, Widget):
     bg_color = ListProperty([1, 1, 1, 1])
+    text = StringProperty("+")
     def __init__(self, **kw):
-        bg = kw.pop("bg_color", [1,1,1,1])
-        kw.setdefault("halign", "center")
-        kw.setdefault("valign", "middle")
         super().__init__(**kw)
-        self.bg_color = bg
         with self.canvas.before:
             self._color = Color(rgba=self.bg_color)
             self._ellipse = Ellipse(pos=self.pos, size=self.size)
         self.bind(pos=self._update, size=self._update, bg_color=self._update_color)
-        self.bind(size=self._update_text_size)
-
-    def _update_text_size(self, *a):
-        self.text_size = self.size
+        
+        self.lbl = Label(text=self.text, font_size=fs(28), bold=True, color=(1,1,1,1), halign="center", valign="middle")
+        self.bind(text=self.lbl.setter('text'), pos=self.lbl.setter('pos'), size=self.lbl.setter('size'))
+        self.lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
+        self.add_widget(self.lbl)
 
     def _update(self, *a):
         self._ellipse.pos = self.pos
         self._ellipse.size = self.size
-
     def _update_color(self, *a):
         self._color.rgba = self.bg_color
 
@@ -928,14 +927,12 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
 
+        # Kutucuk hatalarını gideren temiz buton sistemi
         grid = GridLayout(cols=2, spacing=dp(10), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
 
         for t_key, t_data in THEMES.items():
             btn = Button(text=t_data["name"], size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(t_data["surface"]), color=hex_rgba(t_data["primary"]), font_size=fs(12), bold=True)
-            with btn.canvas.before:
-                Color(*hex_rgba(t_data["primary"], 0.5))
-                Line(rounded_rectangle=[btn.x, btn.y, btn.width, btn.height, dp(8)], width=1.2)
             def set_theme(inst, k=t_key):
                 self.current_theme = k
                 save_settings(self.font_scale, self.current_theme)
@@ -1203,17 +1200,18 @@ class EvimApp(App):
             sub_btns.append(b)
             fab_container.add_widget(b)
 
+        # Temiz Özel Yuvarlak Buton Sınıfı
         main_fab = FAB(text="+", size_hint=(None, None), size=(dph(54), dph(54)), pos=(dph(8), 0), bg_color=hex_rgba(th["primary"]))
             
         fab_container.is_expanded = False
         def toggle_fab(*a):
             fab_container.is_expanded = not fab_container.is_expanded
             if fab_container.is_expanded:
-                main_fab.text = "×"
+                main_fab.lbl.text = "×"
                 for i, b in enumerate(sub_btns):
                     Animation(y=dph(60 + i*46), opacity=1, d=0.1 + i*0.05, t='out_bounce').start(b)
             else:
-                main_fab.text = "+"
+                main_fab.lbl.text = "+"
                 for b in sub_btns:
                     Animation(y=dph(10), opacity=0, d=0.1).start(b)
 
@@ -1230,7 +1228,8 @@ class EvimApp(App):
         main_col = BoxLayout(orientation="vertical")
         main_col.add_widget(self.make_topbar("EVİM"))
 
-        search_row = BoxLayout(size_hint_y=None, height=dph(40), padding=(dp(14), dp(4)))
+        # Arama çubuğu ve kategoriler arasındaki boşluk (padding) küçültüldü
+        search_row = BoxLayout(size_hint_y=None, height=dph(40), padding=(dp(14), dp(2)))
         self._search_input = TextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
                                        background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]),
                                        hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]))
@@ -1244,17 +1243,18 @@ class EvimApp(App):
         main_col.add_widget(self._results_box)
 
         home_scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
-        content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=(0, dp(15), 0, dp(90)))
+        content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
 
-        # Kategoriler - Ekrana Tam Sığan Izgara (Grid) Sistemi
+        # Kategoriler Ekrana Tam Sığan Izgara Olarak Ayarlandı
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
         lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
         content.add_widget(lbl_cat)
         
-        cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None, height=dph(72))
+        cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
+        cat_grid.bind(minimum_height=cat_grid.setter("height"))
         for cat in ITEM_CATEGORIES:
-            cb = Button(text=cat.replace(" ", "\n").replace("/", "/\n"), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(10), halign="center", valign="middle")
+            cb = Button(text=cat.replace(" ", "\n").replace("/", "/\n"), size_hint_y=None, height=dph(36), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(10), halign="center", valign="middle")
             cb.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(4), w.height - dp(4))))
             cb.bind(on_release=lambda inst, c=cat: Clock.schedule_once(lambda dt: self.open_category_filter(c), 0.1))
             cat_grid.add_widget(cb)
@@ -1471,7 +1471,6 @@ class EvimApp(App):
         search_inp.bind(text=on_room_search)
         tools_row.add_widget(search_inp)
         
-        # Kutucu Hatası Düzeltildi, Sırala metni düz ve temiz yapıldı
         sort_btn = Button(text="Sırala", size_hint_x=None, width=dph(70), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(11))
         sort_dd = DropDown(auto_width=False, width=dph(180))
         for s_txt, s_val in [("Tarih (Eski-Yeni)", "id ASC"), ("Tarih (Yeni-Eski)", "id DESC"), ("A-Z (İsim)", "name ASC"), ("Fiyat (Yüksek-Düşük)", "price DESC")]:
@@ -1489,7 +1488,6 @@ class EvimApp(App):
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
         items = DB.get_items(room_id, parent_id, sort_order=self.current_room_sort, search_query=self.current_room_search)
         
-        # İç odalarda 2 sütun zorunlu kılındı
         grid = GridLayout(cols=2, spacing=dp(14), padding=(dp(14), dp(6), dp(14), dp(130)), size_hint_y=None)
         grid.bind(minimum_height=grid.setter("height"))
         
@@ -1572,7 +1570,7 @@ class EvimApp(App):
         name_lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
         
         if child_count > 0 and not self.multi_select_mode:
-            expand_btn = IconBtn(text="v", size_hint=(None, None), size=(dph(24), dph(24)), color=hex_rgba(th["text_secondary"]))
+            expand_btn = IconBtn(text="▼", size_hint=(None, None), size=(dph(24), dph(24)), color=hex_rgba(th["text_secondary"]))
             name_row.add_widget(expand_btn)
             
             inner_box = BoxLayout(orientation='vertical', size_hint_y=None, height=0, opacity=0, spacing=dp(4), padding=(dp(10), dp(4), 0, 0))
@@ -1581,7 +1579,7 @@ class EvimApp(App):
             def toggle_accordion(*a):
                 if card.is_expanded:
                     Animation(height=0, opacity=0, d=0.15).start(inner_box)
-                    expand_btn.text = "v"
+                    expand_btn.text = "▼"
                 else:
                     if not inner_box.children:
                         for c_row in DB.get_items(room_id, item_id, sort_order="id ASC", search_query=""):
@@ -1590,7 +1588,7 @@ class EvimApp(App):
                             inner_box.add_widget(l)
                     target_h = len(inner_box.children) * dph(24) + dp(8)
                     Animation(height=target_h, opacity=1, d=0.15).start(inner_box)
-                    expand_btn.text = "^"
+                    expand_btn.text = "▲"
                 card.is_expanded = not card.is_expanded
             
             name_lbl.bind(on_release=toggle_accordion)
@@ -1855,39 +1853,6 @@ class EvimApp(App):
         self.sm.transition = SlideTransition(direction="left")
         self.sm.current = "info"
 
-    def open_recent_list(self):
-        th = self.theme()
-        screen = self.sm.get_screen("info")
-        screen.clear_widgets()
-        root = BoxLayout(orientation="vertical")
-        root.add_widget(self.make_topbar("Son Eklenen 20 Eşya", on_back=self.go_back, show_menu=False))
-        scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
-        box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8), padding=dp(10))
-        box.bind(minimum_height=box.setter("height"))
-
-        rows = DB.get_recent_items(20)
-        if not rows:
-            empty_lbl = Label(text="Henüz eşya eklenmemiş.", size_hint_y=None, font_size=fs(14), color=hex_rgba(th["text_secondary"]))
-            empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
-            empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
-            box.add_widget(empty_lbl)
-            
-        for row in rows:
-            item_id, name = row[0], row[1]
-            room_id = row[15]
-            path = DB.get_path(item_id)
-            crumb = " › ".join([DB.get_room(room_id)[1]] + [p[1] for p in path[:-1]]) if path else ""
-            btn = Button(text=f"{name}   ({crumb})", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
-            btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            box.add_widget(btn)
-
-        scroll.add_widget(box)
-        root.add_widget(scroll)
-        screen.add_widget(root)
-        self.sm.transition = SlideTransition(direction="left")
-        self.sm.current = "info"
-
     def open_flag_list(self, field, title):
         th = self.theme()
         screen = self.sm.get_screen("info")
@@ -2011,10 +1976,9 @@ class EvimApp(App):
         if edit_room_id:
             existing = DB.get_room(edit_room_id)
             if existing:
-                _rid, rname, rtype, remoji, rphoto = existing
-                field.text = rname
-                self._selected_room_type = rtype
-                type_btn.text = ROOM_TYPES.get(rtype, ROOM_TYPES["diger"])[0]
+                field.text = str(existing[1])
+                self._selected_room_type = str(existing[2]) if len(existing) > 2 else "diger"
+                type_btn.text = ROOM_TYPES.get(self._selected_room_type, ROOM_TYPES["diger"])[0]
 
         btn_row = self.styled_popup_buttons(lambda: popup.dismiss(), lambda *a: save(), "KAYDET" if edit_room_id else "EKLE")
         popup = self.open_auto_popup("", box, buttons_row=btn_row)
@@ -2027,7 +1991,7 @@ class EvimApp(App):
             else:
                 DB.add_room(name, self._selected_room_type)
             popup.dismiss()
-            Clock.schedule_once(lambda dt: self.refresh_home(), 0.1)
+            self.refresh_home()
 
     def open_edit_room_dialog(self, room_id):
         self.open_add_room_dialog(edit_room_id=room_id)
@@ -2042,7 +2006,7 @@ class EvimApp(App):
         def do_delete(*a):
             DB.delete_room(room_id)
             popup.dismiss()
-            Clock.schedule_once(lambda dt: self.refresh_home(), 0.1)
+            self.refresh_home()
 
         btn_row = self.styled_popup_buttons(lambda: popup.dismiss(), do_delete, "SİL")
         popup = self.open_auto_popup("Odayı Sil", box, buttons_row=btn_row, scrollable=False)
@@ -2173,26 +2137,26 @@ class EvimApp(App):
         move_field.input_filter = "int"
 
         chk_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(8))
+        
+        # Güvenli İşaret Butonları (Korumalı Tasarım)
         def make_toggle_chip(label_text, active_color):
             btn = Button(text=label_text, font_size=fs(12), bold=True, background_normal="", color=(1, 1, 1, 1))
-            btn.active = False
             inactive_c = hex_rgba(th["text_secondary"], 0.18)
             active_c = hex_rgba(active_color, 0.9)
             btn.background_color = inactive_c
-            def apply_visual(inst):
-                inst.background_color = active_c if inst.active else inactive_c
-                inst.color = (1, 1, 1, 1) if inst.active else hex_rgba(th["text"])
-            def toggle(inst):
-                inst.active = not inst.active
-                apply_visual(inst)
-            btn.color = hex_rgba(th["text"])
-            btn.bind(on_release=toggle)
-            btn.set_active = lambda value, inst=btn: (setattr(inst, "active", value), apply_visual(inst))
-            return btn
+            btn.custom_active = False
 
-        fav_chk = make_toggle_chip("Favori", th["warn"])
-        sell_chk = make_toggle_chip("Satılık", th["ok"])
-        lost_chk = make_toggle_chip("Kayıp", th["danger"])
+            def toggle(inst):
+                inst.custom_active = not inst.custom_active
+                inst.background_color = active_c if inst.custom_active else inactive_c
+                inst.color = (1, 1, 1, 1) if inst.custom_active else hex_rgba(th["text"])
+            
+            btn.bind(on_release=toggle)
+            return btn, toggle
+
+        fav_chk, fav_toggle = make_toggle_chip("Favori", th["warn"])
+        sell_chk, sell_toggle = make_toggle_chip("Satılık", th["ok"])
+        lost_chk, lost_toggle = make_toggle_chip("Kayıp", th["danger"])
         chk_row.add_widget(fav_chk)
         chk_row.add_widget(sell_chk)
         chk_row.add_widget(lost_chk)
@@ -2204,22 +2168,23 @@ class EvimApp(App):
                 name_field.text = str(item[1])
                 self._selected_category = str(item[2])
                 cat_btn.text = str(item[2])
-                note_field.text = str(item[3] or "")
+                note_field.text = str(item[3] if item[3] else "")
                 price_field.text = str(item[4] if item[4] else "")
-                expiry_field.text = str(item[5] or "")
-                loaned_field.text = str(item[6] or "")
+                expiry_field.text = str(item[5] if item[5] else "")
+                loaned_field.text = str(item[6] if item[6] else "")
                 qty_field.text = str(item[7] if item[7] else "")
                 qty_min_field.text = str(item[8] if item[8] else "")
-                tags_field.text = str(item[9] or "")
+                tags_field.text = str(item[9] if item[9] else "")
                 move_field.text = str(item[13] if item[13] else "")
                 
                 if len(item) > 19:
                     self._selected_unit = str(item[19])
                     unit_btn.text = str(item[19])
-                    
-                fav_chk.set_active(bool(item[10]))
-                sell_chk.set_active(bool(item[11]))
-                lost_chk.set_active(bool(item[12]))
+                
+                # Checkbox durumlarını güvenli güncelleme
+                if bool(item[10]) != fav_chk.custom_active: fav_toggle(fav_chk)
+                if bool(item[11]) != sell_chk.custom_active: sell_toggle(sell_chk)
+                if bool(item[12]) != lost_chk.custom_active: lost_toggle(lost_chk)
 
         def save(*a):
             name = name_field.text.strip()
@@ -2232,9 +2197,9 @@ class EvimApp(App):
                 qty=int(qty_field.text) if qty_field.text.strip() else 0,
                 qty_min=int(qty_min_field.text) if qty_min_field.text.strip() else 0,
                 tags=tags_field.text.strip(),
-                is_favorite=fav_chk.active,
-                is_sell=sell_chk.active,
-                is_lost=lost_chk.active,
+                is_favorite=fav_chk.custom_active,
+                is_sell=sell_chk.custom_active,
+                is_lost=lost_chk.custom_active,
                 move_no=int(move_field.text) if move_field.text.strip() else 0,
                 unit=self._selected_unit
             )
