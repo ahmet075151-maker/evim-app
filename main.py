@@ -581,40 +581,45 @@ DB = Database()
 
 class SafeTextInput(TextInput):
     """
-    Android Gboard / Klavye oto-düzeltme bug'ını (silinen harflerin geri gelmesi)
-    imleci mikro saniyede hareket ettirerek çözen ve Kivy ile 100% uyumlu çalışan sınıf.
+    Android klavye oto-düzeltme (suggestion) aktifken silinen harflerin 
+    geri gelmesini engelleyen ve asla çökmeyen güvenli metin giriş sınıfı.
     """
     def __init__(self, **kwargs):
-        # Miktar/Fiyat gibi sayısal alanlarda klavye önerilerini tamamen kapat
+        # Miktar ve Fiyat gibi rakam girilen alanlarda oto-düzeltmeyi kapatır
         if kwargs.get('input_filter') in ('int', 'float'):
             kwargs.setdefault('keyboard_suggestions', False)
         else:
-            # Metin alanlarında klavye önerilerini (otomatik düzeltmeyi) aç
+            # Metin alanlarında oto-düzeltmeyi her zaman sorunsuz açar
             kwargs.setdefault('keyboard_suggestions', True)
-            
-        kwargs.setdefault('multiline', False)
+        
         super().__init__(**kwargs)
 
-    def do_backspace(self, *args, **kwargs):
-        super().do_backspace(*args, **kwargs)
-        if platform == 'android':
+    def do_backspace(self, from_undo=False, mode='bkspc'):
+        super().do_backspace(from_undo=from_undo, mode=mode)
+        # Geri tuşuna basıldığında Android klavyesini senkronize et
+        if platform == 'android' and self.keyboard_suggestions:
             Clock.schedule_once(self._sync_ime, 0.02)
-            
+
     def insert_text(self, substring, from_undo=False):
         super().insert_text(substring, from_undo=from_undo)
-        if platform == 'android':
+        # Bir harf eklendiğinde Android klavyesini senkronize et
+        if platform == 'android' and self.keyboard_suggestions:
             Clock.schedule_once(self._sync_ime, 0.02)
 
     def _sync_ime(self, dt):
         if not self.focus:
             return
         try:
-            # İmleci anlık olarak başa alıp tekrar eski yerine koymak,
-            # Android klavyesinin önbelleğini zorla Kivy ile senkronize eder.
-            # Bu da "silinen metnin inatla geri gelmesi" sorununu kesin çözer.
-            c = self.cursor
-            self.cursor = (0, c[1])
-            self.cursor = c
+            # İmleci anlık olarak 1 karakter yana kaydırıp yerine getirmek,
+            # Android klavyesine (Gboard) "Kelime değişti, eski hafızayı sil" komutunu yollar.
+            # Ekranda gözle görülmeyecek kadar hızlıdır.
+            idx = self.cursor_index()
+            if idx > 0:
+                self.cursor = self.get_cursor_from_index(idx - 1)
+                self.cursor = self.get_cursor_from_index(idx)
+            elif idx < len(self.text):
+                self.cursor = self.get_cursor_from_index(idx + 1)
+                self.cursor = self.get_cursor_from_index(idx)
         except Exception:
             pass
 
@@ -2303,7 +2308,7 @@ class EvimApp(App):
         move_field = field("Taşınma koli no")
         move_field.input_filter = "int"
 
-        # Tamamen Kivy Uyumlu Güvenli Dict Dictionary Bazlı Etiket Seçimi (Crash Engellendi)
+        # Tamamen Kivy Uyumlu Güvenli Dict Dictionary Bazlı Etiket Seçimi
         chk_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(8))
         states = {"fav": False, "sell": False, "lost": False}
         
@@ -2333,7 +2338,6 @@ class EvimApp(App):
         chk_row.add_widget(lost_btn)
         box.add_widget(chk_row)
 
-        # Veri Tabanından Veri Çekme Hatası Tamamen Kapatıldı
         if edit_id:
             try:
                 db_item = DB.get_item(edit_id)
