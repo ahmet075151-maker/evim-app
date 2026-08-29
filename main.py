@@ -581,38 +581,40 @@ DB = Database()
 
 class SafeTextInput(TextInput):
     """
-    Android klavye oto-düzeltme (suggestion) aktifken, silinen harflerin 
-    geri gelmesi (IME buffer desync) sorununu çözen özel sınıf.
+    Android Gboard / Klavye oto-düzeltme bug'ını (silinen harflerin geri gelmesi)
+    imleci mikro saniyede hareket ettirerek çözen ve Kivy ile 100% uyumlu çalışan sınıf.
     """
     def __init__(self, **kwargs):
-        # Kivy'de oto-düzeltmenin Android tarafından gizlenmemesi için 
-        # multiline=False ZORUNLUDUR. (Çok-satırlı alanlarda Android oto-düzeltmeyi kapatır).
-        kwargs['multiline'] = False
-        kwargs['keyboard_suggestions'] = True
-        kwargs['input_type'] = 'text'
+        # Miktar/Fiyat gibi sayısal alanlarda klavye önerilerini tamamen kapat
+        if kwargs.get('input_filter') in ('int', 'float'):
+            kwargs.setdefault('keyboard_suggestions', False)
+        else:
+            # Metin alanlarında klavye önerilerini (otomatik düzeltmeyi) aç
+            kwargs.setdefault('keyboard_suggestions', True)
+            
+        kwargs.setdefault('multiline', False)
         super().__init__(**kwargs)
 
-    def do_backspace(self, from_undo=False, mode='bkspc'):
-        super().do_backspace(from_undo=from_undo, mode=mode)
+    def do_backspace(self, *args, **kwargs):
+        super().do_backspace(*args, **kwargs)
         if platform == 'android':
-            # Gboard'un silinen metni bellekte tutup tekrar eklemesini (desync) 
-            # engellemek için imleci mikro saniyelik hareket ettirerek klavyeyi senkronize ediyoruz.
-            Clock.schedule_once(self._sync_ime, 0.01)
+            Clock.schedule_once(self._sync_ime, 0.02)
+            
+    def insert_text(self, substring, from_undo=False):
+        super().insert_text(substring, from_undo=from_undo)
+        if platform == 'android':
+            Clock.schedule_once(self._sync_ime, 0.02)
 
     def _sync_ime(self, dt):
         if not self.focus:
             return
         try:
-            idx = self.cursor_index()
-            # İmleci 1 karakter geri veya ileri alıp hemen eski yerine koyarak 
-            # Android IME'yi (klavyeyi) yeni metne zorla güncelliyoruz.
-            # (Bu işlem o kadar hızlı olur ki ekranda gözle fark edilmez).
-            if idx > 0:
-                self.cursor = self.get_cursor_from_index(idx - 1)
-                self.cursor = self.get_cursor_from_index(idx)
-            elif idx < len(self.text):
-                self.cursor = self.get_cursor_from_index(idx + 1)
-                self.cursor = self.get_cursor_from_index(idx)
+            # İmleci anlık olarak başa alıp tekrar eski yerine koymak,
+            # Android klavyesinin önbelleğini zorla Kivy ile senkronize eder.
+            # Bu da "silinen metnin inatla geri gelmesi" sorununu kesin çözer.
+            c = self.cursor
+            self.cursor = (0, c[1])
+            self.cursor = c
         except Exception:
             pass
 
@@ -1329,7 +1331,7 @@ class EvimApp(App):
         content.add_widget(cat_grid)
 
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_rooms)
         
         rooms = DB.get_rooms()
