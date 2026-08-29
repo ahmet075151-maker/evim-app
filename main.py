@@ -590,6 +590,24 @@ DB = Database()
 # ---------------------------------------------------------------------------
 # Özel Görsel Bileşenler (Custom Widgets)
 # ---------------------------------------------------------------------------
+
+class TrackedDropDown(DropDown):
+    def open(self, widget):
+        app = App.get_running_app()
+        if app:
+            if getattr(app, '_active_dropdowns', None) is None:
+                app._active_dropdowns = []
+            if self not in app._active_dropdowns:
+                app._active_dropdowns.append(self)
+        super().open(widget)
+
+    def dismiss(self, *largs, **kwargs):
+        app = App.get_running_app()
+        if app and getattr(app, '_active_dropdowns', None) is not None:
+            if self in app._active_dropdowns:
+                app._active_dropdowns.remove(self)
+        super().dismiss(*largs, **kwargs)
+
 class CustomSpinner(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -844,6 +862,7 @@ class EvimApp(App):
 
     def build(self):
         self.title = "Evim"
+        self._active_dropdowns = []
         settings = load_settings()
         self.font_scale = settings["font_scale"]
         self.current_theme = settings["theme"]
@@ -873,11 +892,21 @@ class EvimApp(App):
 
     def _on_keyboard(self, window, key, *args):
         if key == 27:
+            # Açılır menülerin (DropDown) donup kalmaması için güvenle kapatıyoruz
+            if getattr(self, '_active_dropdowns', None):
+                for dd in list(self._active_dropdowns):
+                    try: dd.dismiss()
+                    except: pass
+                self._active_dropdowns = []
+                return True
+                
+            # Pop-up dialogları güvenle kapatıyoruz
             if self._active_popup is not None:
                 try: self._active_popup.dismiss()
                 except: pass
                 self._active_popup = None
                 return True
+                
             if self.sm.current in ("info",) or (self.sm.current == "room" and self.nav_stack):
                 self.go_back()
                 return True
@@ -1003,8 +1032,13 @@ class EvimApp(App):
         return bar
 
     def open_main_menu(self, caller):
+        if getattr(self, '_main_menu_dd', None):
+            self._main_menu_dd.dismiss()
+            
         th = self.theme()
-        dropdown = DropDown(auto_width=False, width=dph(260))
+        dropdown = TrackedDropDown(auto_width=False, width=dph(260))
+        self._main_menu_dd = dropdown
+        
         entries = [
             ("Ana ekrana dön / Ara", self.go_home),
             ("Sık Kullanılanlar", lambda: self.open_flag_list("is_favorite", "Sık Kullanılanlar")),
@@ -1133,6 +1167,11 @@ class EvimApp(App):
         return box
 
     def open_auto_popup(self, title, inner_box, buttons_row=None, max_frac=0.94, scrollable=True):
+        if getattr(self, '_active_popup', None):
+            try: self._active_popup.dismiss()
+            except: pass
+            self._active_popup = None
+            
         th = self.theme()
         inner_box.size_hint_y = None
         inner_box.bind(minimum_height=inner_box.setter("height"))
@@ -1486,12 +1525,12 @@ class EvimApp(App):
         tools_row.add_widget(multi_btn)
 
         sort_btn = Button(text="Sırala", size_hint_x=None, width=dph(55), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(11))
-        sort_dd = DropDown(auto_width=False, width=dph(180))
+        sort_dd = TrackedDropDown(auto_width=False, width=dph(180))
         for s_txt, s_val in [("Tarih (Eski-Yeni)", "id ASC"), ("Tarih (Yeni-Eski)", "id DESC"), ("A-Z (İsim)", "name ASC"), ("Fiyat (Yüksek-Düşük)", "price DESC")]:
             b = Button(text=s_txt, size_hint_y=None, height=dph(40), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(11))
             b.bind(on_release=lambda btn, v=s_val: sort_dd.select(v))
             sort_dd.add_widget(b)
-        sort_btn.bind(on_release=sort_dd.open)
+        sort_btn.bind(on_release=lambda btn: sort_dd.open(btn))
         def on_sort_select(inst, val):
             self.current_room_sort = val
             Clock.schedule_once(lambda dt: self._render_room(), 0.1)
@@ -2002,7 +2041,7 @@ class EvimApp(App):
 
         self._selected_room_type = "diger"
         type_btn = Button(text=ROOM_TYPES["diger"][0], size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]), font_size=fs(14))
-        dropdown = DropDown()
+        dropdown = TrackedDropDown()
         for key in ROOM_TYPE_ORDER:
             label, color, abbr = ROOM_TYPES[key]
             item = Button(text=label, size_hint_y=None, height=dph(42), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13))
@@ -2046,6 +2085,9 @@ class EvimApp(App):
 
     def open_edit_room_dialog(self, room_id):
         self.open_add_room_dialog(edit_room_id=room_id)
+        
+    def open_edit_item_dialog(self, item_id):
+        self.open_add_item_dialog(edit_id=item_id)
 
     def _confirm_delete_room(self, room_id, name):
         box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
@@ -2127,7 +2169,7 @@ class EvimApp(App):
 
         self._selected_category = "Diğer" if is_box else ITEM_CATEGORIES[-1]
         cat_btn = Button(text=self._selected_category, size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]), font_size=fs(14))
-        dropdown = DropDown()
+        dropdown = TrackedDropDown()
         for cat in ITEM_CATEGORIES:
             item = Button(text=cat, size_hint_y=None, height=dph(40), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13))
             item.bind(on_release=lambda btn: dropdown.select(btn.text))
@@ -2163,7 +2205,7 @@ class EvimApp(App):
         
         self._selected_unit = "Adet"
         unit_btn = Button(text=self._selected_unit, font_size=fs(12), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]))
-        unit_dd = DropDown()
+        unit_dd = TrackedDropDown()
         for un in UNIT_TYPES:
             ub = Button(text=un, size_hint_y=None, height=dph(36), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(12))
             ub.bind(on_release=lambda btn: unit_dd.select(btn.text))
