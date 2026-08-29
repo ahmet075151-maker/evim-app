@@ -515,22 +515,10 @@ class Database:
         c.execute("SELECT id, kind, item_name, path_text, deleted_at, restore_data FROM history ORDER BY id DESC LIMIT 200")
         return c.fetchall()
 
-    def clean_old_history(self):
+    def empty_history(self):
         c = self.conn.cursor()
-        c.execute("SELECT id, deleted_at FROM history")
-        rows = c.fetchall()
-        now = datetime.datetime.now()
-        deleted_count = 0
-        for hid, datestr in rows:
-            try:
-                dt = datetime.datetime.strptime(datestr, "%d.%m.%Y %H:%M")
-                if (now - dt).days > 30:
-                    c.execute("DELETE FROM history WHERE id=?", (hid,))
-                    deleted_count += 1
-            except:
-                pass
+        c.execute("DELETE FROM history")
         self.conn.commit()
-        return deleted_count
 
     def search(self, query):
         q = f"%{query.lower()}%"
@@ -1053,7 +1041,6 @@ class EvimApp(App):
             ("Taşınma Modu", self.open_move_mode),
             ("Yedekle / Dışa Aktar", self.open_backup_menu),
             ("Renk Temaları", self.open_theme_dialog),
-            ("Çöp Kutusunu Boşalt", self.do_clean_trash),
             ("Silinenler Geçmişi", self.open_history),
             ("Yazı Boyutu Ayarı", self.open_font_size_dialog),
             ("Misafir Modu Aç/Kapat", self.toggle_guest),
@@ -1128,10 +1115,6 @@ class EvimApp(App):
 
         btn_row = self.styled_popup_buttons(lambda: self.close_popup(), proceed, "YÜKLE")
         self.open_auto_popup("Yedekten Dön", box, buttons_row=btn_row, scrollable=False)
-
-    def do_clean_trash(self):
-        count = DB.clean_old_history()
-        self._show_message("Temizlik", f"30 günden eski {count} adet kayıt çöp kutusundan kalıcı olarak silindi.")
 
     def go_home(self):
         self.nav_stack = []
@@ -1762,24 +1745,54 @@ class EvimApp(App):
         self.sm.current = "room"
 
     def go_back(self):
-        if self.sm.current == "info":
-            self.sm.transition = SlideTransition(direction="right")
+        # EKRAN KARARMA/BUG DÜZELTMESİ: Hızlı çift tıklamayı veya animasyon çakışmasını önle
+        if getattr(self, '_is_going_back', False):
+            return
+        self._is_going_back = True
+        Clock.schedule_once(lambda dt: setattr(self, '_is_going_back', False), 0.35)
+
+        try:
+            if self.sm.current == "info":
+                self.sm.transition = SlideTransition(direction="right")
+                if self.nav_stack:
+                    self._render_room()
+                    self.sm.current = "room"
+                else:
+                    self.refresh_home()
+                    self.sm.current = "home"
+                return
+                
+            if self.nav_stack:
+                self.nav_stack.pop()
+                
+            self.sm.transition = FadeTransition(duration=0.15)
             if self.nav_stack:
                 self._render_room()
                 self.sm.current = "room"
             else:
                 self.refresh_home()
                 self.sm.current = "home"
-            return
-        if self.nav_stack:
-            self.nav_stack.pop()
-        self.sm.transition = FadeTransition(duration=0.15)
-        if self.nav_stack:
-            self._render_room()
-            self.sm.current = "room"
-        else:
+        except Exception:
+            # Olası bir render hatasında siyah ekranda kalmaması için ana ekrana dön
+            self.nav_stack = []
             self.refresh_home()
             self.sm.current = "home"
+
+    def _confirm_empty_history(self):
+        th = self.theme()
+        box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(14))
+        lbl = Label(text="Tüm silinenler geçmişi kalıcı olarak tamamen silinecek. Onaylıyor musunuz?", font_size=fs(14), size_hint_y=None, color=hex_rgba(th["text"]))
+        lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
+        lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
+        box.add_widget(lbl)
+
+        def confirm(*a):
+            DB.empty_history()
+            self.close_popup()
+            Clock.schedule_once(lambda dt: self.open_history(), 0.15)
+
+        btn_row = self.styled_popup_buttons(lambda: self.close_popup(), confirm, "TEMİZLE")
+        self.open_auto_popup("Geçmişi Temizle", box, buttons_row=btn_row, scrollable=False)
 
     def open_history(self):
         th = self.theme()
@@ -1787,15 +1800,25 @@ class EvimApp(App):
         screen.clear_widgets()
         root = BoxLayout(orientation="vertical")
         root.add_widget(self.make_topbar("Silinenler Geçmişi", on_back=self.go_back, show_menu=False))
+        
         scroll = ScrollView(do_scroll_x=False, do_scroll_y=True)
         box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=dp(10))
         box.bind(minimum_height=box.setter("height"))
+        
         rows = DB.get_history()
+        
+        if rows:
+            btn_del = Button(text="🗑 Geçmişi Tamamen Temizle", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["danger"]), color=(1,1,1,1), font_size=fs(13), bold=True)
+            btn_del.bind(on_release=lambda *a: self._confirm_empty_history())
+            box.add_widget(btn_del)
+            box.add_widget(Widget(size_hint_y=None, height=dp(4)))
+            
         if not rows:
             empty_lbl = Label(text="Henüz silinen bir şey yok.", size_hint_y=None, font_size=fs(14), color=hex_rgba(th["text_secondary"]))
             empty_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
             empty_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(30)))
             box.add_widget(empty_lbl)
+            
         for hid, kind, name, path_text, deleted_at, restore_data in rows:
             row_box = SoftShadowCard(orientation="horizontal", size_hint_y=None, height=dph(60), padding=dp(8), spacing=dp(8), bg_color=hex_rgba(th["surface"]))
             txt = Label(text=f"{name}\n{path_text}  ·  {deleted_at}", font_size=fs(11), color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
@@ -1806,6 +1829,7 @@ class EvimApp(App):
                 restore_btn.bind(on_release=lambda inst, i=hid: Clock.schedule_once(lambda dt: self._do_restore(i), 0.1))
                 row_box.add_widget(restore_btn)
             box.add_widget(row_box)
+            
         scroll.add_widget(box)
         root.add_widget(scroll)
         screen.add_widget(root)
