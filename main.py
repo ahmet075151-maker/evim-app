@@ -581,40 +581,40 @@ DB = Database()
 
 class SafeTextInput(TextInput):
     """
-    Kivy'nin Android'deki meşhur klavye senkronizasyon bug'ını (silinen harflerin 
-    geri gelmesi) çözen ve otomatik düzeltmeyi sorunsuz aktif eden özel sınıf.
+    Android klavye oto-düzeltme (suggestion) aktifken, silinen harflerin 
+    geri gelmesi (IME buffer desync) sorununu çözen özel sınıf.
     """
     def __init__(self, **kwargs):
-        self.is_single = False
-        if kwargs.get('multiline') is False:
-            self.is_single = True
-            # multiline=False olduğunda Kivy, Android klavyesinin buffer'ını 
-            # düzgün senkronize edemez. Çözüm olarak arka planda multiline=True yapıp 
-            # enter tuşunu manuel yakalayacağız.
-            kwargs['multiline'] = True
-        
-        # Otomatik düzeltmeyi (suggestions) her zaman açık tut
-        if 'keyboard_suggestions' in kwargs:
-            del kwargs['keyboard_suggestions']
+        # Kivy'de oto-düzeltmenin Android tarafından gizlenmemesi için 
+        # multiline=False ZORUNLUDUR. (Çok-satırlı alanlarda Android oto-düzeltmeyi kapatır).
+        kwargs['multiline'] = False
         kwargs['keyboard_suggestions'] = True
-        
+        kwargs['input_type'] = 'text'
         super().__init__(**kwargs)
 
-    def insert_text(self, substring, from_undo=False):
-        # Tek satırlık alanda enter (yeni satır) karakteri gelirse klavyeyi kapat
-        if self.is_single and ('\n' in substring or '\r' in substring):
-            substring = substring.replace('\n', '').replace('\r', '')
-            self.focus = False
-            if not substring:
-                return
-        return super().insert_text(substring, from_undo=from_undo)
-        
-    def keyboard_on_key_down(self, window, keycode, text, modifiers):
-        # Fiziksel veya sanal klavyeden gelen Enter (13) tuşunu yakala
-        if self.is_single and keycode[0] == 13:
-            self.focus = False
-            return True
-        return super().keyboard_on_key_down(window, keycode, text, modifiers)
+    def do_backspace(self, from_undo=False, mode='bkspc'):
+        super().do_backspace(from_undo=from_undo, mode=mode)
+        if platform == 'android':
+            # Gboard'un silinen metni bellekte tutup tekrar eklemesini (desync) 
+            # engellemek için imleci mikro saniyelik hareket ettirerek klavyeyi senkronize ediyoruz.
+            Clock.schedule_once(self._sync_ime, 0.01)
+
+    def _sync_ime(self, dt):
+        if not self.focus:
+            return
+        try:
+            idx = self.cursor_index()
+            # İmleci 1 karakter geri veya ileri alıp hemen eski yerine koyarak 
+            # Android IME'yi (klavyeyi) yeni metne zorla güncelliyoruz.
+            # (Bu işlem o kadar hızlı olur ki ekranda gözle fark edilmez).
+            if idx > 0:
+                self.cursor = self.get_cursor_from_index(idx - 1)
+                self.cursor = self.get_cursor_from_index(idx)
+            elif idx < len(self.text):
+                self.cursor = self.get_cursor_from_index(idx + 1)
+                self.cursor = self.get_cursor_from_index(idx)
+        except Exception:
+            pass
 
 
 class TrackedDropDown(DropDown):
@@ -1316,7 +1316,7 @@ class EvimApp(App):
         content.bind(minimum_height=content.setter("height"))
 
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_cat)
         
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
