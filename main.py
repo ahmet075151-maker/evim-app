@@ -878,6 +878,14 @@ class EvimApp(App):
         self.sm.current = "loading"
         return self.sm
 
+    def _check_nav_lock(self):
+        """Ekran geçişleri (animasyonlar) sırasında Kivy'nin çökmesini (siyah ekran) engelleyen global kilit."""
+        if getattr(self, '_nav_lock', False):
+            return True
+        self._nav_lock = True
+        Clock.schedule_once(lambda dt: setattr(self, '_nav_lock', False), 0.4)
+        return False
+
     def close_popup(self, *args):
         """Tüm popup'ları güvenli ve garantili şekilde kapatan yardımcı fonksiyon."""
         if getattr(self, '_active_popup', None):
@@ -1117,6 +1125,7 @@ class EvimApp(App):
         self.open_auto_popup("Yedekten Dön", box, buttons_row=btn_row, scrollable=False)
 
     def go_home(self):
+        if self._check_nav_lock(): return
         self.nav_stack = []
         self.multi_select_mode = False
         self.selected_items = set()
@@ -1289,7 +1298,7 @@ class EvimApp(App):
         content.bind(minimum_height=content.setter("height"))
 
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_cat)
         
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
@@ -1302,7 +1311,7 @@ class EvimApp(App):
         content.add_widget(cat_grid)
 
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_rooms)
         
         rooms = DB.get_rooms()
@@ -1342,6 +1351,7 @@ class EvimApp(App):
             self._results_box.add_widget(b)
 
     def jump_to_item(self, item_id):
+        if self._check_nav_lock(): return
         path = DB.get_path(item_id)
         if not path: return
         room_id = path[0][15]
@@ -1413,6 +1423,7 @@ class EvimApp(App):
         self.open_auto_popup("", box, buttons_row=actions)
 
     def enter_room(self, room_id, name):
+        if self._check_nav_lock(): return
         self.nav_stack = [(room_id, None, name, name)]
         self.current_room_search = ""
         self.current_room_sort = "id ASC"
@@ -1734,6 +1745,7 @@ class EvimApp(App):
         self.open_auto_popup("", box, buttons_row=actions, scrollable=False)
 
     def enter_item(self, item_id, name):
+        if self._check_nav_lock(): return
         room_id, _, _, breadcrumb = self.nav_stack[-1]
         self.nav_stack.append((room_id, item_id, name, breadcrumb + "  ›  " + name))
         self.current_room_search = ""
@@ -1745,11 +1757,7 @@ class EvimApp(App):
         self.sm.current = "room"
 
     def go_back(self):
-        # EKRAN KARARMA/BUG DÜZELTMESİ: Hızlı çift tıklamayı veya animasyon çakışmasını önle
-        if getattr(self, '_is_going_back', False):
-            return
-        self._is_going_back = True
-        Clock.schedule_once(lambda dt: setattr(self, '_is_going_back', False), 0.35)
+        if self._check_nav_lock(): return
 
         try:
             if self.sm.current == "info":
@@ -1795,6 +1803,7 @@ class EvimApp(App):
         self.open_auto_popup("Geçmişi Temizle", box, buttons_row=btn_row, scrollable=False)
 
     def open_history(self):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
@@ -1808,7 +1817,7 @@ class EvimApp(App):
         rows = DB.get_history()
         
         if rows:
-            btn_del = Button(text="🗑 Geçmişi Tamamen Temizle", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["danger"]), color=(1,1,1,1), font_size=fs(13), bold=True)
+            btn_del = Button(text="Geçmişi Tamamen Temizle", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["danger"]), color=(1,1,1,1), font_size=fs(13), bold=True)
             btn_del.bind(on_release=lambda *a: self._confirm_empty_history())
             box.add_widget(btn_del)
             box.add_widget(Widget(size_hint_y=None, height=dp(4)))
@@ -1855,6 +1864,7 @@ class EvimApp(App):
             self._show_message("Hata", str(e))
 
     def open_shopping_list(self):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
@@ -1866,7 +1876,7 @@ class EvimApp(App):
 
         rows = DB.get_low_stock_items()
         if rows:
-            copy_btn = Button(text="📝 Listeyi Kopyala", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["primary"]), color=(1,1,1,1), font_size=fs(14), bold=True)
+            copy_btn = Button(text="Listeyi Kopyala", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["primary"]), color=(1,1,1,1), font_size=fs(14), bold=True)
             copy_btn.bind(on_release=lambda *a: Clock.schedule_once(lambda dt: self.do_copy_shopping_list(), 0.1))
             box.add_widget(copy_btn)
             
@@ -1907,6 +1917,7 @@ class EvimApp(App):
         self.sm.current = "info"
 
     def open_category_filter(self, category):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
@@ -1940,6 +1951,7 @@ class EvimApp(App):
         self.sm.current = "info"
 
     def open_recent_list(self):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
@@ -1973,6 +1985,7 @@ class EvimApp(App):
         self.sm.current = "info"
 
     def open_flag_list(self, field, title):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
@@ -2002,6 +2015,7 @@ class EvimApp(App):
         self.sm.current = "info"
 
     def open_move_mode(self):
+        if self._check_nav_lock(): return
         th = self.theme()
         screen = self.sm.get_screen("info")
         screen.clear_widgets()
