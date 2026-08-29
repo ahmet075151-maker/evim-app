@@ -579,6 +579,44 @@ DB = Database()
 # Özel Görsel Bileşenler (Custom Widgets)
 # ---------------------------------------------------------------------------
 
+class SafeTextInput(TextInput):
+    """
+    Kivy'nin Android'deki meşhur klavye senkronizasyon bug'ını (silinen harflerin 
+    geri gelmesi) çözen ve otomatik düzeltmeyi sorunsuz aktif eden özel sınıf.
+    """
+    def __init__(self, **kwargs):
+        self.is_single = False
+        if kwargs.get('multiline') is False:
+            self.is_single = True
+            # multiline=False olduğunda Kivy, Android klavyesinin buffer'ını 
+            # düzgün senkronize edemez. Çözüm olarak arka planda multiline=True yapıp 
+            # enter tuşunu manuel yakalayacağız.
+            kwargs['multiline'] = True
+        
+        # Otomatik düzeltmeyi (suggestions) her zaman açık tut
+        if 'keyboard_suggestions' in kwargs:
+            del kwargs['keyboard_suggestions']
+        kwargs['keyboard_suggestions'] = True
+        
+        super().__init__(**kwargs)
+
+    def insert_text(self, substring, from_undo=False):
+        # Tek satırlık alanda enter (yeni satır) karakteri gelirse klavyeyi kapat
+        if self.is_single and ('\n' in substring or '\r' in substring):
+            substring = substring.replace('\n', '').replace('\r', '')
+            self.focus = False
+            if not substring:
+                return
+        return super().insert_text(substring, from_undo=from_undo)
+        
+    def keyboard_on_key_down(self, window, keycode, text, modifiers):
+        # Fiziksel veya sanal klavyeden gelen Enter (13) tuşunu yakala
+        if self.is_single and keycode[0] == 13:
+            self.focus = False
+            return True
+        return super().keyboard_on_key_down(window, keycode, text, modifiers)
+
+
 class TrackedDropDown(DropDown):
     def open(self, widget):
         app = App.get_running_app()
@@ -1131,23 +1169,6 @@ class EvimApp(App):
         self.sm.transition = SlideTransition(direction="right")
         self.sm.current = "home"
 
-    _managed_inputs = []
-
-    def fix_focus(self, text_input):
-        text_input.keyboard_suggestions = False
-        self._managed_inputs.append(text_input)
-        def on_touch_down(instance, touch):
-            if instance.collide_point(*touch.pos):
-                for other in list(self._managed_inputs):
-                    if other is not instance:
-                        try: other.focus = False
-                        except: pass
-                Clock.schedule_once(lambda dt: setattr(instance, "focus", True), 0.03)
-                Clock.schedule_once(lambda dt: setattr(instance, "focus", True), 0.15)
-            return False
-        text_input.bind(on_touch_down=on_touch_down)
-        return text_input
-
     def themed_box(self, **kw):
         th = self.theme()
         box = BoxLayout(**kw)
@@ -1279,9 +1300,9 @@ class EvimApp(App):
         main_col.add_widget(self.make_topbar("EVİM"))
 
         search_row = BoxLayout(size_hint_y=None, height=dph(40), padding=(dp(14), dp(2)))
-        self._search_input = TextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
+        self._search_input = SafeTextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
                                        background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]),
-                                       hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]), keyboard_suggestions=False)
+                                       hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]))
         self._search_input.bind(text=self._on_search_text)
         search_row.add_widget(self._search_input)
         main_col.add_widget(search_row)
@@ -1505,8 +1526,8 @@ class EvimApp(App):
         main_col.add_widget(info_row)
 
         tools_row = BoxLayout(size_hint_y=None, height=dph(34), padding=(dp(10), dp(2)), spacing=dp(6))
-        search_inp = TextInput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
-                               background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]), hint_text_color=hex_rgba(th["text_secondary"]), keyboard_suggestions=False)
+        search_inp = SafeTextInput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
+                               background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]), hint_text_color=hex_rgba(th["text_secondary"]))
         
         self._search_event = None
         def on_room_search(inst, val):
@@ -2091,7 +2112,7 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
         
-        field = TextInput(hint_text="Oda adı (örn: Salon)", multiline=False, size_hint_y=None, height=dph(46), font_size=fs(15), keyboard_suggestions=False)
+        field = SafeTextInput(hint_text="Oda adı (örn: Salon)", multiline=False, size_hint_y=None, height=dph(46), font_size=fs(15))
         box.add_widget(field)
 
         self._selected_room_type = "diger"
@@ -2216,7 +2237,7 @@ class EvimApp(App):
         box.add_widget(lbl)
 
         def field(hint, h=46):
-            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14), keyboard_suggestions=False)
+            t = SafeTextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14))
             box.add_widget(t)
             return t
 
@@ -2255,8 +2276,8 @@ class EvimApp(App):
         loaned_field = field("Ödünç verildiyse kime")
 
         qty_row = BoxLayout(size_hint_y=None, height=dph(38), spacing=dp(6))
-        qty_field = TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False)
-        qty_min_field = TextInput(hint_text="Min.", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False)
+        qty_field = SafeTextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int")
+        qty_min_field = SafeTextInput(hint_text="Min.", multiline=False, font_size=fs(13), input_filter="int")
         
         self._selected_unit = "Adet"
         unit_btn = Button(text=self._selected_unit, font_size=fs(12), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]))
