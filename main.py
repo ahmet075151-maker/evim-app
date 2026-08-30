@@ -48,9 +48,10 @@ except Exception:
     camera = None
 
 try:
-    from PIL import Image as PILImage, ExifTags
+    from PIL import Image as PILImage, ExifTags, ImageOps
 except ImportError:
     PILImage = None
+    ImageOps = None
 
 # ---------------------------------------------------------------------------
 # Sabitler & Yollar
@@ -59,9 +60,8 @@ except ImportError:
 def get_evim_dir():
     """Ana Evim klasörünü oluşturur."""
     if platform == "android":
-        # Android 11+ güvenlik kısıtlamaları sebebiyle kök dizine (emulated/0/)
-        # doğrudan klasör açılamaz. Mecburen public olan Download klasörünü kullanıyoruz.
-        base = "/storage/emulated/0/Download/Evim"
+        # Android 11+ kuralları gereği Android/data içine sadece paket adıyla klasör açılabilir.
+        base = "/storage/emulated/0/Android/data/org.ahmetevim.evim/files/Evim"
         if not os.path.exists(base):
             try: os.makedirs(base)
             except Exception: pass
@@ -97,28 +97,19 @@ def get_download_path():
     return get_evim_dir()
 
 def fix_image_orientation(image_path):
-    """Görüntünün EXIF verisine bakar ve yan/ters çekilmişse fiziksel olarak düzeltir."""
-    if not PILImage:
+    """Görüntünün EXIF verisine bakar ve fiziksel olarak dikeltir."""
+    if not PILImage or not ImageOps:
         return
     try:
         with PILImage.open(image_path) as img:
-            if hasattr(img, '_getexif') and img._getexif() is not None:
-                exif = img._getexif()
-                orientation = None
-                for k, v in ExifTags.TAGS.items():
-                    if v == 'Orientation':
-                        orientation = k
-                        break
-                if orientation is not None and orientation in exif:
-                    o_val = exif[orientation]
-                    if o_val in (3, 6, 8):
-                        if o_val == 3:
-                            img = img.rotate(180, expand=True)
-                        elif o_val == 6:
-                            img = img.rotate(270, expand=True)
-                        elif o_val == 8:
-                            img = img.rotate(90, expand=True)
-                        img.save(image_path)
+            # 1. Önce cihazın kaydettiği EXIF (Yön) verisine göre çevir
+            img = ImageOps.exif_transpose(img)
+            
+            # 2. Eğer EXIF yoksa ve resim sensörden hala yatay çıktıysa, zorla portre (dik) yap
+            if img.width > img.height:
+                img = img.rotate(270, expand=True)
+                
+            img.save(image_path)
     except Exception:
         pass
 
@@ -2288,7 +2279,7 @@ class EvimApp(App):
         move_field = field("Taşınma koli no")
         move_field.input_filter = "int"
 
-        # FOTOĞRAF SEÇİM ALANI (Kamera Eklentili ve Yön Düzelten)
+        # FOTOĞRAF SEÇİM ALANI
         photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(8))
         photo_preview = Image(size_hint_x=None, width=dph(50), allow_stretch=True, keep_ratio=True)
         
@@ -2315,12 +2306,10 @@ class EvimApp(App):
             if not path: return
             p_dir = get_photo_dir()
             
-            # Eğer fotoğraf bizim Evim/Fotograflar içindeyse (kameradan)
             if path.startswith(p_dir):
                 fix_image_orientation(path)
                 photo_state["current_file"] = path
             else:
-                # Galeriden geldiyse, Evim klasörüne kopyala ve yönünü düzelt
                 ext = os.path.splitext(path)[1].lower()
                 if not ext: ext = ".jpg"
                 dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}{ext}")
@@ -2343,17 +2332,6 @@ class EvimApp(App):
                 def check_and_apply(dt):
                     path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
                     if os.path.exists(path_to_check):
-                        # --- EKLENEN KISIM: Kameradan gelen resmi zorla DİK (portre) yap ---
-                        if PILImage:
-                            try:
-                                with PILImage.open(path_to_check) as img:
-                                    if img.width > img.height:
-                                        # Eğer genişlik yükseklikten fazlaysa (yatay çekildiyse), dik hale getir
-                                        img = img.rotate(270, expand=True) # 270 derece döndür
-                                        img.save(path_to_check)
-                            except Exception:
-                                pass
-                        # -------------------------------------------------------------------
                         on_photo_picked(path_to_check)
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
