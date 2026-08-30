@@ -57,28 +57,21 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_evim_dir():
-    """Ana Evim klasörünü oluşturur, izin hatası olursa Download içine açar."""
     if platform == "android":
-        base = "/storage/emulated/0/Evim"
-        try:
-            if not os.path.exists(base):
-                os.makedirs(base)
-            return base
-        except Exception:
-            fallback = "/storage/emulated/0/Download/Evim"
-            if not os.path.exists(fallback):
-                try: os.makedirs(fallback)
-                except: pass
-            return fallback
+        base = "/storage/emulated/0/evim"
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
     else:
-        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "evim")
         if not os.path.exists(base):
             try: os.makedirs(base)
             except: pass
         return base
 
 def get_photo_dir():
-    """Fotograflari tutacagimiz klasor (Evim/Fotograflar)"""
+    """Fotograflari tutacagimiz klasor (evim/Fotograflar)"""
     p_dir = os.path.join(get_evim_dir(), "Fotograflar")
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
@@ -2347,6 +2340,17 @@ class EvimApp(App):
                 def check_and_apply(dt):
                     path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
                     if os.path.exists(path_to_check):
+                        # --- EKLENEN KISIM: Kameradan gelen resmi zorla DİK (portre) yap ---
+                        if PILImage:
+                            try:
+                                with PILImage.open(path_to_check) as img:
+                                    if img.width > img.height:
+                                        # Eğer genişlik yükseklikten fazlaysa (yatay çekildiyse), dik hale getir
+                                        img = img.rotate(270, expand=True) # 270 derece döndür
+                                        img.save(path_to_check)
+                            except Exception:
+                                pass
+                        # -------------------------------------------------------------------
                         on_photo_picked(path_to_check)
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
