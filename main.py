@@ -579,45 +579,45 @@ DB = Database()
 # Özel Görsel Bileşenler (Custom Widgets)
 # ---------------------------------------------------------------------------
 
-def make_safe_textinput(**kwargs):
+class SafeTextInput(TextInput):
     """
-    Android klavyesi ile tam uyumlu, çökmeyen ve oto-düzeltme (suggestion) 
-    açıkken silinen harflerin geri gelmesi bug'ını çözen güvenli fonksiyon.
-    (Sınıf miras almadığı için Kivy görsel motorunda asla çökmeye yol açmaz)
+    Android klavyesinde otomatik düzeltme (suggestions) açıkken yaşanan
+    'silinen harflerin geri gelmesi' bug'ını çözen stabil, temiz ve güvenli sınıf.
     """
-    # Miktar/Fiyat gibi sayısal alanlarda klavye önerilerini kapat
-    if kwargs.get('input_filter') in ('int', 'float'):
-        kwargs.setdefault('keyboard_suggestions', False)
-    else:
-        # Metin alanlarında klavye önerilerini (otomatik düzeltmeyi) aç
-        kwargs.setdefault('keyboard_suggestions', True)
-    
-    kwargs.setdefault('multiline', False)
-    ti = TextInput(**kwargs)
-    
-    if platform == 'android' and kwargs.get('keyboard_suggestions'):
-        initial_text = kwargs.get('text', '')
-        if initial_text is None:
-            initial_text = ''
-        ti._last_len = len(initial_text)
-        
-        def on_text_sync(instance, value):
-            curr_len = len(value) if value else 0
-            # Metin silindiğinde (backspace basıldığında)
-            if curr_len < instance._last_len:
-                def sync_ime(*a):
-                    if instance.focus:
-                        c = instance.cursor
-                        # İmleci anlık olarak başa alıp yerine koyarak Android klavyesini senkronize et
-                        instance.cursor = (0, c[1])
-                        instance.cursor = c
-                # Gözle görülmeyecek hızda klavyeyi zorla güncelle
-                Clock.schedule_once(sync_ime, 0.02)
-            instance._last_len = curr_len
+    def __init__(self, **kwargs):
+        # Eğer miktar veya fiyat gibi sadece sayı girilecek bir alansa klavye önerilerini kapat
+        if kwargs.get('input_filter') in ('int', 'float'):
+            kwargs.setdefault('keyboard_suggestions', False)
+        else:
+            # Metin alanlarında klavye önerilerini (otomatik düzeltmeyi) mutlaka aç
+            kwargs.setdefault('keyboard_suggestions', True)
             
-        ti.bind(text=on_text_sync)
-        
-    return ti
+        kwargs.setdefault('multiline', False)
+        super(SafeTextInput, self).__init__(**kwargs)
+
+    def do_backspace(self, from_undo=False, mode='bkspc'):
+        super(SafeTextInput, self).do_backspace(from_undo=from_undo, mode=mode)
+        self._force_sync()
+
+    def insert_text(self, substring, from_undo=False):
+        super(SafeTextInput, self).insert_text(substring, from_undo=from_undo)
+        self._force_sync()
+
+    def _force_sync(self):
+        if platform == 'android' and self.keyboard_suggestions:
+            Clock.schedule_once(self._sync_ime, 0.05)
+
+    def _sync_ime(self, dt):
+        if not getattr(self, 'focus', False):
+            return
+        try:
+            # İmleci saniyenin onda biri hızında bir karakter geri-ileri yaparak
+            # Android klavyesine (Gboard) "Kelime değişti, eski hafızayı sil" komutunu yollar.
+            c = self.cursor
+            self.cursor = (0, c[1])
+            self.cursor = c
+        except Exception:
+            pass
 
 class TrackedDropDown(DropDown):
     def open(self, widget):
@@ -1302,7 +1302,7 @@ class EvimApp(App):
         main_col.add_widget(self.make_topbar("EVİM"))
 
         search_row = BoxLayout(size_hint_y=None, height=dph(40), padding=(dp(14), dp(2)))
-        self._search_input = make_safe_textinput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
+        self._search_input = SafeTextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
                                        background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]),
                                        hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]))
         self._search_input.bind(text=self._on_search_text)
@@ -1528,7 +1528,7 @@ class EvimApp(App):
         main_col.add_widget(info_row)
 
         tools_row = BoxLayout(size_hint_y=None, height=dph(34), padding=(dp(10), dp(2)), spacing=dp(6))
-        search_inp = make_safe_textinput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
+        search_inp = SafeTextInput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
                                background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]), hint_text_color=hex_rgba(th["text_secondary"]))
         
         self._search_event = None
@@ -2114,7 +2114,7 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
         
-        field = make_safe_textinput(hint_text="Oda adı (örn: Salon)", multiline=False, size_hint_y=None, height=dph(46), font_size=fs(15))
+        field = SafeTextInput(hint_text="Oda adı (örn: Salon)", size_hint_y=None, height=dph(46), font_size=fs(15))
         box.add_widget(field)
 
         self._selected_room_type = "diger"
@@ -2239,10 +2239,10 @@ class EvimApp(App):
         box.add_widget(lbl)
 
         def field(hint, h=46, inp_filter=None):
-            kw = dict(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14))
+            kw = dict(hint_text=hint, size_hint_y=None, height=dph(h), font_size=fs(14))
             if inp_filter:
                 kw['input_filter'] = inp_filter
-            t = make_safe_textinput(**kw)
+            t = SafeTextInput(**kw)
             box.add_widget(t)
             return t
 
@@ -2280,8 +2280,8 @@ class EvimApp(App):
         loaned_field = field("Ödünç verildiyse kime")
 
         qty_row = BoxLayout(size_hint_y=None, height=dph(38), spacing=dp(6))
-        qty_field = make_safe_textinput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int")
-        qty_min_field = make_safe_textinput(hint_text="Min.", multiline=False, font_size=fs(13), input_filter="int")
+        qty_field = SafeTextInput(hint_text="Miktar", font_size=fs(13), input_filter="int")
+        qty_min_field = SafeTextInput(hint_text="Min.", font_size=fs(13), input_filter="int")
         
         self._selected_unit = "Adet"
         unit_btn = Button(text=self._selected_unit, font_size=fs(12), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]))
@@ -2304,6 +2304,7 @@ class EvimApp(App):
         tags_field = field("Etiketler (virgülle)")
         move_field = field("Taşınma koli no", inp_filter="int")
 
+        # Tamamen Kivy Uyumlu Güvenli Dict Dictionary Bazlı Etiket Seçimi
         chk_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(8))
         states = {"fav": False, "sell": False, "lost": False}
         
