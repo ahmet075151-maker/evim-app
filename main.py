@@ -57,52 +57,42 @@ except ImportError:
 # Sabitler & Yollar
 # ---------------------------------------------------------------------------
 
-def get_evim_dir():
-    """Ana Evim klasörünü oluşturur (Çökme riskini tamamen önlemek için Download klasörü kullanılır)"""
+def get_internal_dir():
+    """Uygulamanın ASLA çökmeyecek, galeriden %100 gizli olan iç hafızası"""
     if platform == "android":
-        base = "/storage/emulated/0/Download/Evim"
-        if not os.path.exists(base):
-            try: os.makedirs(base)
-            except: pass
-        return base
+        from android.storage import app_storage_path
+        return app_storage_path()
     else:
-        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
-        if not os.path.exists(base):
-            try: os.makedirs(base)
-            except: pass
-        return base
+        return os.path.dirname(os.path.abspath(__file__))
 
 def get_photo_dir():
-    """Fotograflari tutacagimiz klasor ve Galeride gorunmeme (.nomedia) ayari"""
-    p_dir = os.path.join(get_evim_dir(), "Fotograflar")
+    """Fotoğraflar bu iç hafızaya kaydedilir, böylece sistem galerisi onları asla bulamaz."""
+    p_dir = os.path.join(get_internal_dir(), "Fotograflar")
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
         except: pass
-        
-    # Bu dosya sayesinde fotoğraflar telefon galerisinde gözükmez
-    nomedia_path = os.path.join(p_dir, ".nomedia")
-    if not os.path.exists(nomedia_path):
-        try:
-            with open(nomedia_path, "w") as f:
-                f.write("")
-        except: pass
-        
     return p_dir
 
 def get_db_path():
-    """Veritabanı çalışma yolu"""
-    if platform == "android":
-        from android.storage import app_storage_path
-        base = app_storage_path()
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, "evim.db")
+    return os.path.join(get_internal_dir(), "evim.db")
 
 def get_settings_path():
-    return os.path.join(os.path.dirname(get_db_path()), "ayarlar.txt")
+    return os.path.join(get_internal_dir(), "ayarlar.txt")
 
 def get_download_path():
-    return get_evim_dir()
+    """Yedekler için her türlü formata (.db, .csv) izin veren genel klasör."""
+    if platform == "android":
+        base = "/storage/emulated/0/Download/Evim_Yedek"
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
+    else:
+        base = os.path.join(get_internal_dir(), "Evim_Yedek")
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
 
 def fix_image_orientation(image_path):
     """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
@@ -132,21 +122,24 @@ def fix_image_orientation(image_path):
         pass
 
 def migrate_old_photos():
-    """Önceki sürümlerde eklenen eski fotoğrafları güvenle taşır."""
+    """Önceki denemelerden kalan fotoğrafları güvenli iç hafızaya taşır."""
     try:
-        if platform == "android":
-            from android.storage import app_storage_path
-            old_p_dir = os.path.join(app_storage_path(), "photos")
-        else:
-            old_p_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "photos")
-        
         new_p_dir = get_photo_dir()
-        if os.path.exists(old_p_dir):
-            for f in os.listdir(old_p_dir):
-                old_f = os.path.join(old_p_dir, f)
-                new_f = os.path.join(new_p_dir, f)
-                if not os.path.exists(new_f):
-                    shutil.move(old_f, new_f)
+        old_paths = []
+        if platform == "android":
+            old_paths = [
+                "/storage/emulated/0/Evim/Fotograflar",
+                "/storage/emulated/0/Download/Evim/Fotograflar",
+                "/storage/emulated/0/Pictures/Evim/Fotograflar",
+            ]
+        for old_p_dir in old_paths:
+            if os.path.exists(old_p_dir):
+                for f in os.listdir(old_p_dir):
+                    old_f = os.path.join(old_p_dir, f)
+                    new_f = os.path.join(new_p_dir, f)
+                    if not os.path.exists(new_f):
+                        try: shutil.move(old_f, new_f)
+                        except: pass
     except Exception:
         pass
 
@@ -939,10 +932,10 @@ class EvimApp(App):
         self.title = "Evim"
         self._active_dropdowns = []
         
-        # Çökme riskini almak yerine hatayı yakala ve pas geç
+        # Olası taşınma hatalarını yakalayıp çökmeyi önle
         try:
             migrate_old_photos()
-        except:
+        except Exception:
             pass
         
         settings = load_settings()
@@ -1405,7 +1398,7 @@ class EvimApp(App):
             cat_grid.add_widget(cb)
         content.add_widget(cat_grid)
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_rooms)
         rooms = DB.get_rooms()
         grid_cols = 1 if len(rooms) == 1 else 2
@@ -1540,7 +1533,7 @@ class EvimApp(App):
             b.bind(on_release=do_move)
             inner.add_widget(b)
         box.add_widget(inner)
-        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]))
+        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]), font_size=fs(14))
         self.open_auto_popup("Toplu Taşı", box, buttons_row=cancel)
         cancel.bind(on_release=lambda *a: self.close_popup())
 
