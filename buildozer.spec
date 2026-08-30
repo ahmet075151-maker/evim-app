@@ -5,12 +5,12 @@ package.domain = org.ahmetevim
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,db
 version = 1.0
-requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.0,sqlite3
+requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.0,sqlite3,plyer
 icon.filename = %(source.dir)s/icon.png
 orientation = portrait
 fullscreen = 0
 
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,READ_MEDIA_IMAGES
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,CAMERA
 android.api = 33
 android.minapi = 21
 android.ndk_api = 21
