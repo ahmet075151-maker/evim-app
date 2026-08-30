@@ -117,21 +117,30 @@ def get_download_path():
     return get_evim_dir()
 
 def fix_image_orientation(image_path):
-    """Görüntünün EXIF verisine bakar, yoksa ve yataysa fiziksel olarak dikeltir."""
+    """Görüntünün EXIF verisine bakar, yataysa dikeltir ve beyaz çıkmasını önlemek için boyutlandırır."""
     if not PILImage or not ImageOps:
         return
     try:
         with PILImage.open(image_path) as img:
-            # 1. EXIF yön verisi varsa ona göre çevir
+            # 1. EXIF rotasyonu (varsa ona göre çevir)
             if hasattr(ImageOps, 'exif_transpose'):
                 img = ImageOps.exif_transpose(img)
             
-            # 2. Çevirme işlemine rağmen genişlik yükseklikten fazlaysa (fotoğraf yataysa)
-            # zorla 90 derece döndürerek dik (portre) yap.
+            # 2. Kamera hala yatay kaydettiyse zorla dik formata yap (90/270 derece döndür)
             if img.width > img.height:
                 img = img.rotate(270, expand=True)
                 
-            img.save(image_path)
+            # 3. Kivy'nin BEYAZ GÖSTERMEMESİ İÇİN (OpenGL texture limitini aşmamak için) resmi küçült
+            max_size = 1920
+            if img.width > max_size or img.height > max_size:
+                resample_filter = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
+                img.thumbnail((max_size, max_size), resample_filter)
+                
+            # 4. Saydamlık uyumsuzlukları ve CMYK hatalarını önlemek için RGB formata zorla
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+                
+            img.save(image_path, "JPEG", quality=85)
     except Exception:
         pass
 
@@ -1391,7 +1400,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -2328,20 +2337,17 @@ class EvimApp(App):
             if not path: return
             p_dir = get_photo_dir()
             
-            if path.startswith(p_dir):
-                fix_image_orientation(path)
+            # Kivy önbelleklerine (beyaz resim vs.) takılmamak için yepyeni eşsiz bir dosya oluşturuyoruz
+            dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}.jpg")
+            try:
+                if path != dest:
+                    shutil.copy(path, dest)
+                fix_image_orientation(dest)
+                photo_state["current_file"] = dest
+            except Exception:
+                # Olası hatada orijinal kameranın tuttuğu dosyaya dön, ama çökmeyi engelle
                 photo_state["current_file"] = path
-            else:
-                ext = os.path.splitext(path)[1].lower()
-                if not ext: ext = ".jpg"
-                dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}{ext}")
-                try:
-                    if path != dest:
-                        shutil.copy(path, dest)
-                    fix_image_orientation(dest)
-                    photo_state["current_file"] = dest
-                except Exception as e:
-                    pass
+            
             update_photo_preview()
 
         def take_camera_photo(*a):
@@ -2354,11 +2360,13 @@ class EvimApp(App):
             def _on_complete(filepath):
                 def check_and_apply(dt):
                     path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
-                    if os.path.exists(path_to_check):
+                    if os.path.exists(path_to_check) and os.path.getsize(path_to_check) > 0:
                         on_photo_picked(path_to_check)
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
-                Clock.schedule_once(check_and_apply, 0.5)
+                
+                # Bazı kameraların dosyayı tam diske yazmasını beklemek için 0.8 saniye bekle
+                Clock.schedule_once(check_and_apply, 0.8)
 
             try:
                 camera.take_picture(filename=temp_filename, on_complete=_on_complete)
