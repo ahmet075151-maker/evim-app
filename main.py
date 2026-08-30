@@ -44,7 +44,7 @@ import sqlite3
 
 try:
     from plyer import camera
-except ImportError:
+except Exception:
     camera = None
 
 # ---------------------------------------------------------------------------
@@ -682,7 +682,6 @@ class SoftShadowCard(BoxLayout):
     def _update_color(self, *a):
         self._main_color.rgba = self.bg_color
 
-
 class ClickableCard(ButtonBehavior, SoftShadowCard):
     pass
 
@@ -841,7 +840,6 @@ class Badge(Label):
         self._rect.pos = self.pos
         self._rect.size = self.size
 
-# Temiz Buton Altyapılı Kusursuz Yuvarlak FAB
 class FAB(ButtonBehavior, Label):
     bg_color = ListProperty([1, 1, 1, 1])
     def __init__(self, **kw):
@@ -904,12 +902,23 @@ class EvimApp(App):
         self.sm.add_widget(RoomScreen(name="room"))
         self.sm.add_widget(InfoScreen(name="info"))
         self.refresh_home()
+        
+        # Kamera hatası önleyici ve izin mekanizması tamamen ana yapıya alındı
         if platform == "android":
             try:
                 from android.permissions import request_permissions, Permission
                 request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_MEDIA_IMAGES, Permission.CAMERA])
             except Exception:
                 pass
+            
+            try:
+                from jnius import autoclass
+                StrictMode = autoclass('android.os.StrictMode')
+                builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
+                StrictMode.setVmPolicy(builder.build())
+            except Exception:
+                pass
+
         self.sm.current = "loading"
         return self.sm
 
@@ -1325,7 +1334,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -2265,17 +2274,9 @@ class EvimApp(App):
             if camera is None:
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
-            
-            if platform == "android":
-                try:
-                    from jnius import autoclass
-                    StrictMode = autoclass('android.os.StrictMode')
-                    builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
-                    StrictMode.setVmPolicy(builder.build())
-                except Exception:
-                    pass
 
             temp_filename = os.path.join(get_photo_dir(), f"cam_{uuid.uuid4().hex[:8]}.jpg")
+            
             def _on_complete(filepath):
                 if filepath and os.path.exists(filepath):
                     Clock.schedule_once(lambda dt: on_photo_picked(filepath), 0)
