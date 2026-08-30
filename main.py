@@ -58,21 +58,13 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_evim_dir():
-    """Ana Evim klasörünü oluşturur (Çökme korumalı ortak klasör)"""
+    """Ana Evim klasörünü oluşturur (Çökme riskini tamamen önlemek için Download klasörü kullanılır)"""
     if platform == "android":
-        try:
-            from android.storage import primary_external_storage_path
-            base = os.path.join(primary_external_storage_path(), "Pictures", "Evim")
-            if not os.path.exists(base):
-                os.makedirs(base)
-            return base
-        except Exception:
-            from android.storage import app_storage_path
-            base = os.path.join(app_storage_path(), "Evim_Yedekleri")
-            if not os.path.exists(base):
-                try: os.makedirs(base)
-                except: pass
-            return base
+        base = "/storage/emulated/0/Download/Evim"
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
     else:
         base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
         if not os.path.exists(base):
@@ -87,6 +79,7 @@ def get_photo_dir():
         try: os.makedirs(p_dir)
         except: pass
         
+    # Bu dosya sayesinde fotoğraflar telefon galerisinde gözükmez
     nomedia_path = os.path.join(p_dir, ".nomedia")
     if not os.path.exists(nomedia_path):
         try:
@@ -109,30 +102,28 @@ def get_settings_path():
     return os.path.join(os.path.dirname(get_db_path()), "ayarlar.txt")
 
 def get_download_path():
-    """Veritabanı yedekleri ve CSV için klasör (Android kuralları gereği Download kullanılmalıdır)"""
-    if platform == "android":
-        base = "/storage/emulated/0/Download"
-        if not os.path.exists(base):
-            try: os.makedirs(base)
-            except: pass
-        return base
-    else:
-        return get_evim_dir()
+    return get_evim_dir()
 
 def fix_image_orientation(image_path):
     """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
     if not PILImage: return
     try:
         with PILImage.open(image_path) as img:
+            # 1. EXIF rotasyonunu düzelt
             if ImageOps and hasattr(ImageOps, 'exif_transpose'):
                 img = ImageOps.exif_transpose(img)
             
+            # 2. Resim genişliği yüksekliğinden fazlaysa (yataysa) zorla dik (portre) yap
             if img.width > img.height:
                 img = img.rotate(270, expand=True)
                 
-            if img.width > 1920 or img.height > 1920:
-                img.thumbnail((1920, 1920))
+            # 3. Kivy'nin belleğini şişirip beyaz kutu vermemesi için resmi küçült
+            max_size = 1920
+            if img.width > max_size or img.height > max_size:
+                resample_filter = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
+                img.thumbnail((max_size, max_size), resample_filter)
                 
+            # 4. Format uyumsuzluklarına karşı standart RGB'ye çevir
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 
@@ -948,7 +939,11 @@ class EvimApp(App):
         self.title = "Evim"
         self._active_dropdowns = []
         
-        Clock.schedule_once(lambda dt: migrate_old_photos(), 3.0)
+        # Çökme riskini almak yerine hatayı yakala ve pas geç
+        try:
+            migrate_old_photos()
+        except:
+            pass
         
         settings = load_settings()
         self.font_scale = settings["font_scale"]
