@@ -58,25 +58,21 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_evim_dir():
-    """Ana Evim klasörünü oluşturur (Download hariç, Documents kullanılıyor)."""
+    """Ana Evim klasörünü oluşturur (Çökme korumalı ortak klasör)"""
     if platform == "android":
-        # Android kısıtlamalarına takılmamak için Documents klasörünü kullanıyoruz.
-        base = "/storage/emulated/0/Documents/Evim"
         try:
+            from android.storage import primary_external_storage_path
+            base = os.path.join(primary_external_storage_path(), "Pictures", "Evim")
             if not os.path.exists(base):
                 os.makedirs(base)
+            return base
         except Exception:
-            pass
-            
-        # Eğer Documents klasörüne yazma izni verilmezse, uygulamanın çökmemesi için
-        # %100 garantili olan kendi iç hafızasına (files) güvenli yedek almasını sağla.
-        if not os.path.exists(base):
             from android.storage import app_storage_path
             base = os.path.join(app_storage_path(), "Evim_Yedekleri")
             if not os.path.exists(base):
                 try: os.makedirs(base)
                 except: pass
-        return base
+            return base
     else:
         base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
         if not os.path.exists(base):
@@ -91,7 +87,6 @@ def get_photo_dir():
         try: os.makedirs(p_dir)
         except: pass
         
-    # .nomedia dosyasi bu klasordeki resimlerin telefon galerisinde cikmasini tamamen engeller
     nomedia_path = os.path.join(p_dir, ".nomedia")
     if not os.path.exists(nomedia_path):
         try:
@@ -102,7 +97,7 @@ def get_photo_dir():
     return p_dir
 
 def get_db_path():
-    """Veritabanı çalışma yolu (Eski yerinde kalması veri güvenliği için şarttır, yedekler Evim klasörüne alınır)"""
+    """Veritabanı çalışma yolu"""
     if platform == "android":
         from android.storage import app_storage_path
         base = app_storage_path()
@@ -117,26 +112,19 @@ def get_download_path():
     return get_evim_dir()
 
 def fix_image_orientation(image_path):
-    """Görüntünün EXIF verisine bakar, yataysa dikeltir ve beyaz çıkmasını önlemek için boyutlandırır."""
-    if not PILImage or not ImageOps:
-        return
+    """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
+    if not PILImage: return
     try:
         with PILImage.open(image_path) as img:
-            # 1. EXIF rotasyonu (varsa ona göre çevir)
-            if hasattr(ImageOps, 'exif_transpose'):
+            if ImageOps and hasattr(ImageOps, 'exif_transpose'):
                 img = ImageOps.exif_transpose(img)
             
-            # 2. Kamera hala yatay kaydettiyse zorla dik formata yap (90/270 derece döndür)
             if img.width > img.height:
                 img = img.rotate(270, expand=True)
                 
-            # 3. Kivy'nin BEYAZ GÖSTERMEMESİ İÇİN (OpenGL texture limitini aşmamak için) resmi küçült
-            max_size = 1920
-            if img.width > max_size or img.height > max_size:
-                resample_filter = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
-                img.thumbnail((max_size, max_size), resample_filter)
+            if img.width > 1920 or img.height > 1920:
+                img.thumbnail((1920, 1920))
                 
-            # 4. Saydamlık uyumsuzlukları ve CMYK hatalarını önlemek için RGB formata zorla
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 
@@ -145,7 +133,7 @@ def fix_image_orientation(image_path):
         pass
 
 def migrate_old_photos():
-    """Önceki sürümlerde eklenen eski fotoğrafları yeni Evim/Fotograflar klasörüne güvenle taşır."""
+    """Önceki sürümlerde eklenen eski fotoğrafları güvenle taşır."""
     try:
         if platform == "android":
             from android.storage import app_storage_path
@@ -949,7 +937,8 @@ class EvimApp(App):
         self.title = "Evim"
         self._active_dropdowns = []
         
-        migrate_old_photos()
+        # Baslangicta cokmeyi onlemek icin klasor olusturma islemini 3 saniye geciktiriyoruz
+        Clock.schedule_once(lambda dt: migrate_old_photos(), 3.0)
         
         settings = load_settings()
         self.font_scale = settings["font_scale"]
@@ -1400,7 +1389,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -1546,7 +1535,7 @@ class EvimApp(App):
             b.bind(on_release=do_move)
             inner.add_widget(b)
         box.add_widget(inner)
-        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]))
+        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]), font_size=fs(14))
         self.open_auto_popup("Toplu Taşı", box, buttons_row=cancel)
         cancel.bind(on_release=lambda *a: self.close_popup())
 
@@ -2337,7 +2326,6 @@ class EvimApp(App):
             if not path: return
             p_dir = get_photo_dir()
             
-            # Kivy önbelleklerine (beyaz resim vs.) takılmamak için yepyeni eşsiz bir dosya oluşturuyoruz
             dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}.jpg")
             try:
                 if path != dest:
@@ -2345,7 +2333,6 @@ class EvimApp(App):
                 fix_image_orientation(dest)
                 photo_state["current_file"] = dest
             except Exception:
-                # Olası hatada orijinal kameranın tuttuğu dosyaya dön, ama çökmeyi engelle
                 photo_state["current_file"] = path
             
             update_photo_preview()
@@ -2365,7 +2352,6 @@ class EvimApp(App):
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
                 
-                # Bazı kameraların dosyayı tam diske yazmasını beklemek için 0.8 saniye bekle
                 Clock.schedule_once(check_and_apply, 0.8)
 
             try:
