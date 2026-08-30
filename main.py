@@ -57,21 +57,24 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_evim_dir():
+    """Ana Evim klasörünü oluşturur."""
     if platform == "android":
-        base = "/storage/emulated/0/evim"
+        # Android 11+ güvenlik kısıtlamaları sebebiyle kök dizine (emulated/0/)
+        # doğrudan klasör açılamaz. Mecburen public olan Download klasörünü kullanıyoruz.
+        base = "/storage/emulated/0/Download/Evim"
         if not os.path.exists(base):
             try: os.makedirs(base)
-            except: pass
+            except Exception: pass
         return base
     else:
-        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "evim")
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
         if not os.path.exists(base):
             try: os.makedirs(base)
             except: pass
         return base
 
 def get_photo_dir():
-    """Fotograflari tutacagimiz klasor (evim/Fotograflar)"""
+    """Fotograflari tutacagimiz klasor (Evim/Fotograflar)"""
     p_dir = os.path.join(get_evim_dir(), "Fotograflar")
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
