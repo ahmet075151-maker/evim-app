@@ -10,7 +10,7 @@ icon.filename = %(source.dir)s/icon.png
 orientation = portrait
 fullscreen = 0
 
-android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
+android.permissions = WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,READ_MEDIA_IMAGES
 android.api = 33
 android.minapi = 21
 android.ndk_api = 21
