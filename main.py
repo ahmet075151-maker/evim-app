@@ -47,11 +47,46 @@ try:
 except Exception:
     camera = None
 
+try:
+    from PIL import Image as PILImage, ExifTags
+except ImportError:
+    PILImage = None
+
 # ---------------------------------------------------------------------------
 # Sabitler & Yollar
 # ---------------------------------------------------------------------------
 
+def get_evim_dir():
+    """Ana Evim klasörünü oluşturur, izin hatası olursa Download içine açar."""
+    if platform == "android":
+        base = "/storage/emulated/0/Evim"
+        try:
+            if not os.path.exists(base):
+                os.makedirs(base)
+            return base
+        except Exception:
+            fallback = "/storage/emulated/0/Download/Evim"
+            if not os.path.exists(fallback):
+                try: os.makedirs(fallback)
+                except: pass
+            return fallback
+    else:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
+
+def get_photo_dir():
+    """Fotograflari tutacagimiz klasor (Evim/Fotograflar)"""
+    p_dir = os.path.join(get_evim_dir(), "Fotograflar")
+    if not os.path.exists(p_dir):
+        try: os.makedirs(p_dir)
+        except: pass
+    return p_dir
+
 def get_db_path():
+    """Veritabanı çalışma yolu (Eski yerinde kalması veri güvenliği için şarttır, yedekler Evim klasörüne alınır)"""
     if platform == "android":
         from android.storage import app_storage_path
         base = app_storage_path()
@@ -59,40 +94,56 @@ def get_db_path():
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, "evim.db")
 
-def get_photo_dir():
-    if platform == "android":
-        from android.storage import app_storage_path
-        base = app_storage_path()
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    p_dir = os.path.join(base, "photos")
-    if not os.path.exists(p_dir):
-        try:
-            os.makedirs(p_dir)
-        except Exception:
-            pass
-    return p_dir
-
-def save_photo_to_internal(source_path):
-    if not source_path or not os.path.exists(source_path):
-        return ""
-    p_dir = get_photo_dir()
-    if source_path.startswith(p_dir):
-        return os.path.basename(source_path)
-    
-    ext = os.path.splitext(source_path)[1]
-    if not ext:
-        ext = ".jpg"
-    new_filename = f"photo_{uuid.uuid4().hex[:8]}{ext}"
-    dest_path = os.path.join(p_dir, new_filename)
-    try:
-        shutil.copy(source_path, dest_path)
-        return new_filename
-    except Exception:
-        return ""
-
 def get_settings_path():
     return os.path.join(os.path.dirname(get_db_path()), "ayarlar.txt")
+
+def get_download_path():
+    return get_evim_dir()
+
+def fix_image_orientation(image_path):
+    """Görüntünün EXIF verisine bakar ve yan/ters çekilmişse fiziksel olarak düzeltir."""
+    if not PILImage:
+        return
+    try:
+        with PILImage.open(image_path) as img:
+            if hasattr(img, '_getexif') and img._getexif() is not None:
+                exif = img._getexif()
+                orientation = None
+                for k, v in ExifTags.TAGS.items():
+                    if v == 'Orientation':
+                        orientation = k
+                        break
+                if orientation is not None and orientation in exif:
+                    o_val = exif[orientation]
+                    if o_val in (3, 6, 8):
+                        if o_val == 3:
+                            img = img.rotate(180, expand=True)
+                        elif o_val == 6:
+                            img = img.rotate(270, expand=True)
+                        elif o_val == 8:
+                            img = img.rotate(90, expand=True)
+                        img.save(image_path)
+    except Exception:
+        pass
+
+def migrate_old_photos():
+    """Önceki sürümlerde eklenen eski fotoğrafları yeni Evim/Fotograflar klasörüne güvenle taşır."""
+    try:
+        if platform == "android":
+            from android.storage import app_storage_path
+            old_p_dir = os.path.join(app_storage_path(), "photos")
+        else:
+            old_p_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "photos")
+        
+        new_p_dir = get_photo_dir()
+        if os.path.exists(old_p_dir):
+            for f in os.listdir(old_p_dir):
+                old_f = os.path.join(old_p_dir, f)
+                new_f = os.path.join(new_p_dir, f)
+                if not os.path.exists(new_f):
+                    shutil.move(old_f, new_f)
+    except Exception:
+        pass
 
 def load_settings():
     try:
@@ -111,11 +162,6 @@ def save_settings(font_scale, theme):
             json.dump({"font_scale": font_scale, "theme": theme}, f)
     except Exception:
         pass
-
-def get_download_path():
-    if platform == "android":
-        return "/storage/emulated/0/Download"
-    return os.path.dirname(get_db_path())
 
 
 ROOM_TYPES = {
@@ -884,6 +930,9 @@ class EvimApp(App):
     def build(self):
         self.title = "Evim"
         self._active_dropdowns = []
+        
+        migrate_old_photos()
+        
         settings = load_settings()
         self.font_scale = settings["font_scale"]
         self.current_theme = settings["theme"]
@@ -2243,7 +2292,7 @@ class EvimApp(App):
         move_field = field("Taşınma koli no")
         move_field.input_filter = "int"
 
-        # FOTOĞRAF SEÇİM ALANI (Kamera Eklentili)
+        # FOTOĞRAF SEÇİM ALANI (Kamera Eklentili ve Yön Düzelten)
         photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(8))
         photo_preview = Image(size_hint_x=None, width=dph(50), allow_stretch=True, keep_ratio=True)
         
@@ -2261,12 +2310,30 @@ class EvimApp(App):
             if path_to_show:
                 photo_preview.source = path_to_show
                 photo_preview.opacity = 1
+                photo_preview.reload()
             else:
                 photo_preview.source = ""
                 photo_preview.opacity = 0
                 
         def on_photo_picked(path):
-            photo_state["current_file"] = path
+            if not path: return
+            p_dir = get_photo_dir()
+            
+            # Eğer fotoğraf bizim Evim/Fotograflar içindeyse (kameradan)
+            if path.startswith(p_dir):
+                fix_image_orientation(path)
+                photo_state["current_file"] = path
+            else:
+                # Galeriden geldiyse, Evim klasörüne kopyala ve yönünü düzelt
+                ext = os.path.splitext(path)[1].lower()
+                if not ext: ext = ".jpg"
+                dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}{ext}")
+                try:
+                    shutil.copy(path, dest)
+                    fix_image_orientation(dest)
+                    photo_state["current_file"] = dest
+                except Exception:
+                    pass
             update_photo_preview()
 
         def take_camera_photo(*a):
@@ -2274,19 +2341,16 @@ class EvimApp(App):
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
 
-            # ANAHTAR DÜZELTME: Kameranın yazabilmesi için geçici dosyayı dış dizine koy
-            temp_dir = get_download_path()
-            temp_filename = os.path.join(temp_dir, f"cam_{uuid.uuid4().hex[:8]}.jpg")
+            temp_filename = os.path.join(get_photo_dir(), f"cam_{uuid.uuid4().hex[:8]}.jpg")
             
             def _on_complete(filepath):
-                # Dosya sisteme tam yazılsın diye çok kısa bir gecikme ekliyoruz
                 def check_and_apply(dt):
                     path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
                     if os.path.exists(path_to_check):
                         on_photo_picked(path_to_check)
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
-                Clock.schedule_once(check_and_apply, 0.3)
+                Clock.schedule_once(check_and_apply, 0.5)
 
             try:
                 camera.take_picture(filename=temp_filename, on_complete=_on_complete)
@@ -2392,9 +2456,7 @@ class EvimApp(App):
             
             final_photo = photo_state["existing_file"]
             if photo_state["current_file"]:
-                saved_name = save_photo_to_internal(photo_state["current_file"])
-                if saved_name:
-                    final_photo = saved_name
+                final_photo = os.path.basename(photo_state["current_file"])
             elif not photo_state["existing_file"] and not photo_state["current_file"]:
                 final_photo = ""
             
