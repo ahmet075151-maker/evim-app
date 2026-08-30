@@ -11,6 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Sunucu Hatasini Atlat (Freetype Manuel Indirme)
+        run: |
+          mkdir -p .buildozer/android/platform/build-arm64-v8a_armeabi-v7a/packages/freetype
+          curl -L -o .buildozer/android/platform/build-arm64-v8a_armeabi-v7a/packages/freetype/freetype-2.14.1.tar.gz https://downloads.sourceforge.net/project/freetype/freetype2/2.14.1/freetype-2.14.1.tar.gz
+
       - name: APK derle (resmi Kivy Buildozer Docker imaji ile)
         run: |
           docker run --rm \
