@@ -109,7 +109,15 @@ def get_settings_path():
     return os.path.join(os.path.dirname(get_db_path()), "ayarlar.txt")
 
 def get_download_path():
-    return get_evim_dir()
+    """Veritabanı yedekleri ve CSV için klasör (Android kuralları gereği Download kullanılmalıdır)"""
+    if platform == "android":
+        base = "/storage/emulated/0/Download"
+        if not os.path.exists(base):
+            try: os.makedirs(base)
+            except: pass
+        return base
+    else:
+        return get_evim_dir()
 
 def fix_image_orientation(image_path):
     """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
@@ -567,6 +575,8 @@ class Database:
                 "qty": item[7], "qty_min": item[8], "tags": item[9],
                 "is_favorite": item[10], "is_sell": item[11], "is_lost": item[12],
                 "move_no": item[13], "room_id": item[15], "parent_id": item[16],
+                "emoji": item[17] if len(item) > 17 else "",
+                "photo_path": item[18] if len(item) > 18 else "",
                 "unit": item[19] if len(item) > 19 else "Adet"
             }
             self._log_history("Eşya", item[1], path_text, data)
@@ -586,6 +596,7 @@ class Database:
                       loaned_to=data["loaned_to"], qty=data["qty"], qty_min=data["qty_min"],
                       tags=data["tags"], is_favorite=data["is_favorite"],
                       is_sell=data["is_sell"], is_lost=data["is_lost"], move_no=data["move_no"],
+                      emoji=data.get("emoji", ""), photo_path=data.get("photo_path", ""),
                       unit=data.get("unit", "Adet"))
         c.execute("DELETE FROM history WHERE id=?", (history_id,))
         self.conn.commit()
@@ -937,7 +948,6 @@ class EvimApp(App):
         self.title = "Evim"
         self._active_dropdowns = []
         
-        # Baslangicta cokmeyi onlemek icin klasor olusturma islemini 3 saniye geciktiriyoruz
         Clock.schedule_once(lambda dt: migrate_old_photos(), 3.0)
         
         settings = load_settings()
@@ -1389,7 +1399,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -1535,7 +1545,7 @@ class EvimApp(App):
             b.bind(on_release=do_move)
             inner.add_widget(b)
         box.add_widget(inner)
-        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]), font_size=fs(14))
+        cancel = Button(text="İPTAL", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]))
         self.open_auto_popup("Toplu Taşı", box, buttons_row=cancel)
         cancel.bind(on_release=lambda *a: self.close_popup())
 
