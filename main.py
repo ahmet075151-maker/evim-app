@@ -9,6 +9,7 @@ import json
 import datetime
 import shutil
 import math
+import uuid
 
 from kivy.app import App
 from kivy.core.window import Window
@@ -32,6 +33,7 @@ from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.widget import Widget
 from kivy.uix.slider import Slider
 from kivy.uix.relativelayout import RelativeLayout
+from kivy.uix.filechooser import FileChooserListView
 from kivy.animation import Animation
 from kivy.lang import Builder
 from kivy.utils import platform, get_color_from_hex
@@ -52,10 +54,40 @@ def get_db_path():
         base = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, "evim.db")
 
+def get_photo_dir():
+    if platform == "android":
+        from android.storage import app_storage_path
+        base = app_storage_path()
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    p_dir = os.path.join(base, "photos")
+    if not os.path.exists(p_dir):
+        try:
+            os.makedirs(p_dir)
+        except Exception:
+            pass
+    return p_dir
+
+def save_photo_to_internal(source_path):
+    if not source_path or not os.path.exists(source_path):
+        return ""
+    p_dir = get_photo_dir()
+    if source_path.startswith(p_dir):
+        return os.path.basename(source_path)
+    
+    ext = os.path.splitext(source_path)[1]
+    if not ext:
+        ext = ".jpg"
+    new_filename = f"photo_{uuid.uuid4().hex[:8]}{ext}"
+    dest_path = os.path.join(p_dir, new_filename)
+    try:
+        shutil.copy(source_path, dest_path)
+        return new_filename
+    except Exception:
+        return ""
 
 def get_settings_path():
     return os.path.join(os.path.dirname(get_db_path()), "ayarlar.txt")
-
 
 def load_settings():
     try:
@@ -68,14 +100,12 @@ def load_settings():
     except Exception:
         return {"font_scale": 3.25, "theme": "orijinal"}
 
-
 def save_settings(font_scale, theme):
     try:
         with open(get_settings_path(), "w", encoding="utf-8") as f:
             json.dump({"font_scale": font_scale, "theme": theme}, f)
     except Exception:
         pass
-
 
 def get_download_path():
     if platform == "android":
@@ -579,46 +609,6 @@ DB = Database()
 # Özel Görsel Bileşenler (Custom Widgets)
 # ---------------------------------------------------------------------------
 
-class SafeTextInput(TextInput):
-    """
-    Android klavyesinde otomatik düzeltme (suggestions) açıkken yaşanan
-    'silinen harflerin geri gelmesi' bug'ını çözen stabil, temiz ve güvenli sınıf.
-    """
-    def __init__(self, **kwargs):
-        # Eğer miktar veya fiyat gibi sadece sayı girilecek bir alansa klavye önerilerini kapat
-        if kwargs.get('input_filter') in ('int', 'float'):
-            kwargs.setdefault('keyboard_suggestions', False)
-        else:
-            # Metin alanlarında klavye önerilerini (otomatik düzeltmeyi) mutlaka aç
-            kwargs.setdefault('keyboard_suggestions', True)
-            
-        kwargs.setdefault('multiline', False)
-        super(SafeTextInput, self).__init__(**kwargs)
-
-    def do_backspace(self, from_undo=False, mode='bkspc'):
-        super(SafeTextInput, self).do_backspace(from_undo=from_undo, mode=mode)
-        self._force_sync()
-
-    def insert_text(self, substring, from_undo=False):
-        super(SafeTextInput, self).insert_text(substring, from_undo=from_undo)
-        self._force_sync()
-
-    def _force_sync(self):
-        if platform == 'android' and self.keyboard_suggestions:
-            Clock.schedule_once(self._sync_ime, 0.05)
-
-    def _sync_ime(self, dt):
-        if not getattr(self, 'focus', False):
-            return
-        try:
-            # İmleci saniyenin onda biri hızında bir karakter geri-ileri yaparak
-            # Android klavyesine (Gboard) "Kelime değişti, eski hafızayı sil" komutunu yollar.
-            c = self.cursor
-            self.cursor = (0, c[1])
-            self.cursor = c
-        except Exception:
-            pass
-
 class TrackedDropDown(DropDown):
     def open(self, widget):
         app = App.get_running_app()
@@ -912,11 +902,48 @@ class EvimApp(App):
         if platform == "android":
             try:
                 from android.permissions import request_permissions, Permission
-                request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE])
+                request_permissions([Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_MEDIA_IMAGES])
             except Exception:
                 pass
         self.sm.current = "loading"
         return self.sm
+
+    def open_photo_chooser(self, callback):
+        th = self.theme()
+        box = self.themed_box(orientation="vertical", spacing=dp(10), padding=dp(10))
+        
+        start_path = "/storage/emulated/0"
+        if platform == "android":
+            dcim_path = "/storage/emulated/0/DCIM"
+            if os.path.exists(dcim_path):
+                start_path = dcim_path
+        else:
+            start_path = os.path.expanduser("~")
+            
+        fc = FileChooserListView(path=start_path, filters=["*.png", "*.jpg", "*.jpeg", "*.webp"])
+        box.add_widget(fc)
+        
+        btn_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(10))
+        cancel = Button(text="İPTAL", background_normal="", background_color=hex_rgba(th["text_secondary"], 0.3), color=hex_rgba(th["text"]), font_size=fs(14))
+        select = Button(text="SEÇ", background_normal="", background_color=hex_rgba(th["primary"]), color=(1,1,1,1), font_size=fs(14), bold=True)
+        
+        btn_row.add_widget(cancel)
+        btn_row.add_widget(select)
+        box.add_widget(btn_row)
+        
+        popup = Popup(title="Dosya Seç", content=box, size_hint=(0.95, 0.95), background="", background_color=hex_rgba(th["bg"]), title_color=hex_rgba(th["text"]))
+        
+        def on_select(*a):
+            if fc.selection:
+                callback(fc.selection[0])
+                popup.dismiss()
+            else:
+                self._show_message("Uyarı", "Lütfen listeden bir fotoğraf seçip 'SEÇ'e basın.")
+                
+        select.bind(on_release=on_select)
+        cancel.bind(on_release=lambda *a: popup.dismiss())
+        
+        popup.open()
 
     def close_popup(self, *args):
         """Tüm popup'ları güvenli ve garantili şekilde kapatan yardımcı fonksiyon."""
@@ -1171,6 +1198,23 @@ class EvimApp(App):
         self.sm.transition = SlideTransition(direction="right")
         self.sm.current = "home"
 
+    _managed_inputs = []
+
+    def fix_focus(self, text_input):
+        text_input.keyboard_suggestions = False
+        self._managed_inputs.append(text_input)
+        def on_touch_down(instance, touch):
+            if instance.collide_point(*touch.pos):
+                for other in list(self._managed_inputs):
+                    if other is not instance:
+                        try: other.focus = False
+                        except: pass
+                Clock.schedule_once(lambda dt: setattr(instance, "focus", True), 0.03)
+                Clock.schedule_once(lambda dt: setattr(instance, "focus", True), 0.15)
+            return False
+        text_input.bind(on_touch_down=on_touch_down)
+        return text_input
+
     def themed_box(self, **kw):
         th = self.theme()
         box = BoxLayout(**kw)
@@ -1302,9 +1346,9 @@ class EvimApp(App):
         main_col.add_widget(self.make_topbar("EVİM"))
 
         search_row = BoxLayout(size_hint_y=None, height=dph(40), padding=(dp(14), dp(2)))
-        self._search_input = SafeTextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
+        self._search_input = TextInput(hint_text="Eşyalarınızda arayın...", multiline=False, font_size=fs(12), padding=(dp(12), dp(8)),
                                        background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]),
-                                       hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]))
+                                       hint_text_color=hex_rgba(th["text_secondary"]), cursor_color=hex_rgba(th["primary"]), keyboard_suggestions=False)
         self._search_input.bind(text=self._on_search_text)
         search_row.add_widget(self._search_input)
         main_col.add_widget(search_row)
@@ -1318,7 +1362,7 @@ class EvimApp(App):
         content.bind(minimum_height=content.setter("height"))
 
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
         content.add_widget(lbl_cat)
         
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
@@ -1331,7 +1375,7 @@ class EvimApp(App):
         content.add_widget(cat_grid)
 
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
         content.add_widget(lbl_rooms)
         
         rooms = DB.get_rooms()
@@ -1528,8 +1572,8 @@ class EvimApp(App):
         main_col.add_widget(info_row)
 
         tools_row = BoxLayout(size_hint_y=None, height=dph(34), padding=(dp(10), dp(2)), spacing=dp(6))
-        search_inp = SafeTextInput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
-                               background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]), hint_text_color=hex_rgba(th["text_secondary"]))
+        search_inp = TextInput(text=self.current_room_search, hint_text="Odada ara...", multiline=False, font_size=fs(11), padding=(dp(8), dp(6)),
+                               background_color=hex_rgba(th["surface2"]), foreground_color=hex_rgba(th["text"]), hint_text_color=hex_rgba(th["text_secondary"]), keyboard_suggestions=False)
         
         self._search_event = None
         def on_room_search(inst, val):
@@ -1720,6 +1764,15 @@ class EvimApp(App):
         t_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
         t_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
         box.add_widget(t_lbl)
+
+        # Eşyanın fotoğrafı varsa ? (bilgi) ekranının başlığının hemen altında göster
+        if item_photo:
+            full_path = os.path.join(get_photo_dir(), item_photo)
+            if os.path.exists(full_path):
+                img_box = BoxLayout(size_hint_y=None, height=dph(180), padding=(0, dp(8)))
+                img = Image(source=full_path, allow_stretch=True, keep_ratio=True)
+                img_box.add_widget(img)
+                box.add_widget(img_box)
 
         lbl_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text_secondary"])[:3])
         val_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text"])[:3])
@@ -2114,7 +2167,7 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
         
-        field = SafeTextInput(hint_text="Oda adı (örn: Salon)", size_hint_y=None, height=dph(46), font_size=fs(15))
+        field = TextInput(hint_text="Oda adı (örn: Salon)", multiline=False, size_hint_y=None, height=dph(46), font_size=fs(15), keyboard_suggestions=False)
         box.add_widget(field)
 
         self._selected_room_type = "diger"
@@ -2238,11 +2291,8 @@ class EvimApp(App):
         lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1] + dp(10)))
         box.add_widget(lbl)
 
-        def field(hint, h=46, inp_filter=None):
-            kw = dict(hint_text=hint, size_hint_y=None, height=dph(h), font_size=fs(14))
-            if inp_filter:
-                kw['input_filter'] = inp_filter
-            t = SafeTextInput(**kw)
+        def field(hint, h=46):
+            t = TextInput(hint_text=hint, multiline=False, size_hint_y=None, height=dph(h), font_size=fs(14), keyboard_suggestions=False)
             box.add_widget(t)
             return t
 
@@ -2263,7 +2313,8 @@ class EvimApp(App):
         if not is_box: box.add_widget(cat_btn)
 
         note_field = field("Not (isteğe bağlı)")
-        price_field = field("Fiyat / değer (TL, isteğe bağlı)", inp_filter="float")
+        price_field = field("Fiyat / değer (TL, isteğe bağlı)")
+        price_field.input_filter = "float"
 
         expiry_field = field("Son kullanma / garanti (GG/AA/YYYY)")
         def on_expiry_text(instance, value):
@@ -2280,8 +2331,8 @@ class EvimApp(App):
         loaned_field = field("Ödünç verildiyse kime")
 
         qty_row = BoxLayout(size_hint_y=None, height=dph(38), spacing=dp(6))
-        qty_field = SafeTextInput(hint_text="Miktar", font_size=fs(13), input_filter="int")
-        qty_min_field = SafeTextInput(hint_text="Min.", font_size=fs(13), input_filter="int")
+        qty_field = TextInput(hint_text="Miktar", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False)
+        qty_min_field = TextInput(hint_text="Min.", multiline=False, font_size=fs(13), input_filter="int", keyboard_suggestions=False)
         
         self._selected_unit = "Adet"
         unit_btn = Button(text=self._selected_unit, font_size=fs(12), background_normal="", background_color=hex_rgba(th["text_secondary"], 0.15), color=hex_rgba(th["text"]))
@@ -2302,9 +2353,51 @@ class EvimApp(App):
         box.add_widget(qty_row)
 
         tags_field = field("Etiketler (virgülle)")
-        move_field = field("Taşınma koli no", inp_filter="int")
+        move_field = field("Taşınma koli no")
+        move_field.input_filter = "int"
 
-        # Tamamen Kivy Uyumlu Güvenli Dict Dictionary Bazlı Etiket Seçimi
+        # FOTOĞRAF SEÇİM ALANI
+        photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(10))
+        photo_preview = Image(size_hint_x=None, width=dph(50), allow_stretch=True, keep_ratio=True)
+        
+        photo_state = {"current_file": "", "existing_file": ""}
+        
+        def update_photo_preview():
+            path_to_show = ""
+            if photo_state["current_file"]:
+                path_to_show = photo_state["current_file"]
+            elif photo_state["existing_file"]:
+                full_path = os.path.join(get_photo_dir(), photo_state["existing_file"])
+                if os.path.exists(full_path):
+                    path_to_show = full_path
+            
+            if path_to_show:
+                photo_preview.source = path_to_show
+                photo_preview.opacity = 1
+            else:
+                photo_preview.source = ""
+                photo_preview.opacity = 0
+                
+        def on_photo_picked(path):
+            photo_state["current_file"] = path
+            update_photo_preview()
+
+        photo_btn = Button(text="Fotoğraf Seç (İsteğe Bağlı)", background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(13))
+        photo_btn.bind(on_release=lambda *a: self.open_photo_chooser(on_photo_picked))
+        
+        clear_photo_btn = Button(text="Sil", size_hint_x=None, width=dph(40), background_normal="", background_color=hex_rgba(th["danger"]), color=(1,1,1,1), font_size=fs(11), bold=True)
+        def clear_photo(*a):
+            photo_state["current_file"] = ""
+            photo_state["existing_file"] = ""
+            update_photo_preview()
+        clear_photo_btn.bind(on_release=clear_photo)
+
+        photo_row.add_widget(photo_preview)
+        photo_row.add_widget(photo_btn)
+        photo_row.add_widget(clear_photo_btn)
+        box.add_widget(photo_row)
+
+        # Tamamen Kivy Uyumlu Güvenli Dict Dictionary Bazlı Etiket Seçimi (Crash Engellendi)
         chk_row = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(8))
         states = {"fav": False, "sell": False, "lost": False}
         
@@ -2334,6 +2427,7 @@ class EvimApp(App):
         chk_row.add_widget(lost_btn)
         box.add_widget(chk_row)
 
+        # Veri Tabanından Veri Çekme Hatası Tamamen Kapatıldı
         if edit_id:
             try:
                 db_item = DB.get_item(edit_id)
@@ -2353,6 +2447,9 @@ class EvimApp(App):
                     if len(db_item) > 19:
                         self._selected_unit = str(db_item[19] or "Adet")
                         unit_btn.text = self._selected_unit
+                        
+                    photo_state["existing_file"] = str(db_item[18] or "")
+                    update_photo_preview()
                     
                     states["fav"] = bool(db_item[10])
                     update_chip(fav_btn, "fav", th["warn"])
@@ -2365,6 +2462,8 @@ class EvimApp(App):
             except Exception:
                 pass
 
+        update_photo_preview()
+
         def save(*a):
             name = name_field.text.strip()
             if not name: return
@@ -2374,6 +2473,14 @@ class EvimApp(App):
             q_val = qty_field.text.strip()
             qm_val = qty_min_field.text.strip()
             m_val = move_field.text.strip()
+            
+            final_photo = photo_state["existing_file"]
+            if photo_state["current_file"]:
+                saved_name = save_photo_to_internal(photo_state["current_file"])
+                if saved_name:
+                    final_photo = saved_name
+            elif not photo_state["existing_file"] and not photo_state["current_file"]:
+                final_photo = "" # It was cleared
             
             kw = dict(
                 price=float(p_val) if p_val else 0,
@@ -2386,7 +2493,8 @@ class EvimApp(App):
                 is_sell=states["sell"],
                 is_lost=states["lost"],
                 move_no=int(m_val) if m_val else 0,
-                unit=self._selected_unit
+                unit=self._selected_unit,
+                photo_path=final_photo
             )
             if edit_id:
                 DB.update_item(edit_id, name, self._selected_category, note_field.text.strip(), **kw)
