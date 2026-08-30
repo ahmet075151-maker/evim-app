@@ -1325,7 +1325,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(36), None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -2265,6 +2265,16 @@ class EvimApp(App):
             if camera is None:
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
+            
+            if platform == "android":
+                try:
+                    from jnius import autoclass
+                    StrictMode = autoclass('android.os.StrictMode')
+                    builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
+                    StrictMode.setVmPolicy(builder.build())
+                except Exception:
+                    pass
+
             temp_filename = os.path.join(get_photo_dir(), f"cam_{uuid.uuid4().hex[:8]}.jpg")
             def _on_complete(filepath):
                 if filepath and os.path.exists(filepath):
