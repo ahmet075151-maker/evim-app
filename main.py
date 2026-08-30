@@ -58,13 +58,24 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_evim_dir():
-    """Ana Evim klasörünü oluşturur."""
+    """Ana Evim klasörünü oluşturur (Download hariç, Documents kullanılıyor)."""
     if platform == "android":
-        # Android 11+ kuralları gereği Android/data içine sadece paket adıyla klasör açılabilir.
-        base = "/storage/emulated/0/Android/data/org.ahmetevim.evim/files/Evim"
+        # Android kısıtlamalarına takılmamak için Documents klasörünü kullanıyoruz.
+        base = "/storage/emulated/0/Documents/Evim"
+        try:
+            if not os.path.exists(base):
+                os.makedirs(base)
+        except Exception:
+            pass
+            
+        # Eğer Documents klasörüne yazma izni verilmezse, uygulamanın çökmemesi için
+        # %100 garantili olan kendi iç hafızasına (files) güvenli yedek almasını sağla.
         if not os.path.exists(base):
-            try: os.makedirs(base)
-            except Exception: pass
+            from android.storage import app_storage_path
+            base = os.path.join(app_storage_path(), "Evim_Yedekleri")
+            if not os.path.exists(base):
+                try: os.makedirs(base)
+                except: pass
         return base
     else:
         base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Evim")
@@ -74,11 +85,20 @@ def get_evim_dir():
         return base
 
 def get_photo_dir():
-    """Fotograflari tutacagimiz klasor (Evim/Fotograflar)"""
+    """Fotograflari tutacagimiz klasor ve Galeride gorunmeme (.nomedia) ayari"""
     p_dir = os.path.join(get_evim_dir(), "Fotograflar")
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
         except: pass
+        
+    # .nomedia dosyasi bu klasordeki resimlerin telefon galerisinde cikmasini tamamen engeller
+    nomedia_path = os.path.join(p_dir, ".nomedia")
+    if not os.path.exists(nomedia_path):
+        try:
+            with open(nomedia_path, "w") as f:
+                f.write("")
+        except: pass
+        
     return p_dir
 
 def get_db_path():
@@ -97,15 +117,17 @@ def get_download_path():
     return get_evim_dir()
 
 def fix_image_orientation(image_path):
-    """Görüntünün EXIF verisine bakar ve fiziksel olarak dikeltir."""
+    """Görüntünün EXIF verisine bakar, yoksa ve yataysa fiziksel olarak dikeltir."""
     if not PILImage or not ImageOps:
         return
     try:
         with PILImage.open(image_path) as img:
-            # 1. Önce cihazın kaydettiği EXIF (Yön) verisine göre çevir
-            img = ImageOps.exif_transpose(img)
+            # 1. EXIF yön verisi varsa ona göre çevir
+            if hasattr(ImageOps, 'exif_transpose'):
+                img = ImageOps.exif_transpose(img)
             
-            # 2. Eğer EXIF yoksa ve resim sensörden hala yatay çıktıysa, zorla portre (dik) yap
+            # 2. Çevirme işlemine rağmen genişlik yükseklikten fazlaysa (fotoğraf yataysa)
+            # zorla 90 derece döndürerek dik (portre) yap.
             if img.width > img.height:
                 img = img.rotate(270, expand=True)
                 
@@ -2314,10 +2336,11 @@ class EvimApp(App):
                 if not ext: ext = ".jpg"
                 dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}{ext}")
                 try:
-                    shutil.copy(path, dest)
+                    if path != dest:
+                        shutil.copy(path, dest)
                     fix_image_orientation(dest)
                     photo_state["current_file"] = dest
-                except Exception:
+                except Exception as e:
                     pass
             update_photo_preview()
 
