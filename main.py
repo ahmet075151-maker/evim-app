@@ -903,7 +903,6 @@ class EvimApp(App):
         self.sm.add_widget(InfoScreen(name="info"))
         self.refresh_home()
         
-        # Kamera hatası önleyici ve izin mekanizması tamamen ana yapıya alındı
         if platform == "android":
             try:
                 from android.permissions import request_permissions, Permission
@@ -2275,15 +2274,22 @@ class EvimApp(App):
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
 
-            temp_filename = os.path.join(get_photo_dir(), f"cam_{uuid.uuid4().hex[:8]}.jpg")
+            # ANAHTAR DÜZELTME: Kameranın yazabilmesi için geçici dosyayı dış dizine koy
+            temp_dir = get_download_path()
+            temp_filename = os.path.join(temp_dir, f"cam_{uuid.uuid4().hex[:8]}.jpg")
             
             def _on_complete(filepath):
-                if filepath and os.path.exists(filepath):
-                    Clock.schedule_once(lambda dt: on_photo_picked(filepath), 0)
+                # Dosya sisteme tam yazılsın diye çok kısa bir gecikme ekliyoruz
+                def check_and_apply(dt):
+                    path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
+                    if os.path.exists(path_to_check):
+                        on_photo_picked(path_to_check)
+                    else:
+                        self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
+                Clock.schedule_once(check_and_apply, 0.3)
+
             try:
                 camera.take_picture(filename=temp_filename, on_complete=_on_complete)
-            except NotImplementedError:
-                self._show_message("Hata", "Kamera bu cihazda desteklenmiyor.")
             except Exception as e:
                 self._show_message("Hata", f"Kamera açılamadı: {e}")
 
