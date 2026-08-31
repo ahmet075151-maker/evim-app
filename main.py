@@ -82,11 +82,8 @@ def get_settings_path():
 def get_download_path():
     """Yedekler için her türlü formata (.db, .csv) izin veren genel klasör."""
     if platform == "android":
-        base = "/storage/emulated/0/Download/Evim_Yedek"
-        if not os.path.exists(base):
-            try: os.makedirs(base)
-            except: pass
-        return base
+        # Android'de izin (Errno 1) hatası olmaması için doğrudan ana Download klasörünü kullanıyoruz
+        return "/storage/emulated/0/Download"
     else:
         base = os.path.join(get_internal_dir(), "Evim_Yedek")
         if not os.path.exists(base):
@@ -476,11 +473,11 @@ class Database:
                      is_sell, is_lost, move_no, emoji, photo_path, unit)
                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (room_id, parent_id, name, category, note,
-                   kw.get("price", 0), kw.get("expiry", ""), kw.get("loaned_to", ""),
-                   kw.get("qty", 0), kw.get("qty_min", 0), kw.get("tags", ""),
+                   kw.get("price", 0), kw.get("expiry") or "", kw.get("loaned_to") or "",
+                   kw.get("qty", 0), kw.get("qty_min", 0), kw.get("tags") or "",
                    int(kw.get("is_favorite", False)), int(kw.get("is_sell", False)),
-                   int(kw.get("is_lost", False)), kw.get("move_no", 0), kw.get("emoji", ""),
-                   kw.get("photo_path", ""), kw.get("unit", "Adet")))
+                   int(kw.get("is_lost", False)), kw.get("move_no", 0), kw.get("emoji") or "",
+                   kw.get("photo_path") or "", kw.get("unit") or "Adet"))
         new_id = c.lastrowid
         c.execute("UPDATE items SET code=? WHERE id=?", (f"K-{new_id:04d}", new_id))
         self.conn.commit()
@@ -491,12 +488,12 @@ class Database:
         c.execute("""UPDATE items SET name=?, category=?, note=?, price=?, expiry=?,
                      loaned_to=?, qty=?, qty_min=?, tags=?, is_favorite=?, is_sell=?,
                      is_lost=?, move_no=?, emoji=?, photo_path=?, unit=? WHERE id=?""",
-                  (name, category, note, kw.get("price", 0), kw.get("expiry", ""),
-                   kw.get("loaned_to", ""), kw.get("qty", 0), kw.get("qty_min", 0),
-                   kw.get("tags", ""), int(kw.get("is_favorite", False)),
+                  (name, category, note, kw.get("price", 0), kw.get("expiry") or "",
+                   kw.get("loaned_to") or "", kw.get("qty", 0), kw.get("qty_min", 0),
+                   kw.get("tags") or "", int(kw.get("is_favorite", False)),
                    int(kw.get("is_sell", False)), int(kw.get("is_lost", False)),
-                   kw.get("move_no", 0), kw.get("emoji", ""), kw.get("photo_path", ""), 
-                   kw.get("unit", "Adet"), item_id))
+                   kw.get("move_no", 0), kw.get("emoji") or "", kw.get("photo_path") or "", 
+                   kw.get("unit") or "Adet", item_id))
         self.conn.commit()
 
     def move_item(self, item_id, new_room_id, new_parent_id):
@@ -559,9 +556,9 @@ class Database:
                 "qty": item[7], "qty_min": item[8], "tags": item[9],
                 "is_favorite": item[10], "is_sell": item[11], "is_lost": item[12],
                 "move_no": item[13], "room_id": item[15], "parent_id": item[16],
-                "emoji": item[17] if len(item) > 17 else "",
-                "photo_path": item[18] if len(item) > 18 else "",
-                "unit": item[19] if len(item) > 19 else "Adet"
+                "emoji": item[17] if (len(item) > 17 and item[17]) else "",
+                "photo_path": item[18] if (len(item) > 18 and item[18]) else "",
+                "unit": item[19] if (len(item) > 19 and item[19]) else "Adet"
             }
             self._log_history("Eşya", item[1], path_text, data)
         c = self.conn.cursor()
@@ -576,12 +573,12 @@ class Database:
             return False
         data = json.loads(row[1])
         self.add_item(data["room_id"], data["parent_id"], data["name"], data["category"],
-                      data["note"], price=data["price"], expiry=data["expiry"],
-                      loaned_to=data["loaned_to"], qty=data["qty"], qty_min=data["qty_min"],
-                      tags=data["tags"], is_favorite=data["is_favorite"],
-                      is_sell=data["is_sell"], is_lost=data["is_lost"], move_no=data["move_no"],
-                      emoji=data.get("emoji", ""), photo_path=data.get("photo_path", ""),
-                      unit=data.get("unit", "Adet"))
+                      data["note"], price=data.get("price", 0), expiry=data.get("expiry") or "",
+                      loaned_to=data.get("loaned_to") or "", qty=data.get("qty", 0), qty_min=data.get("qty_min", 0),
+                      tags=data.get("tags") or "", is_favorite=data.get("is_favorite", False),
+                      is_sell=data.get("is_sell", False), is_lost=data.get("is_lost", False), move_no=data.get("move_no", 0),
+                      emoji=data.get("emoji") or "", photo_path=data.get("photo_path") or "",
+                      unit=data.get("unit") or "Adet")
         c.execute("DELETE FROM history WHERE id=?", (history_id,))
         self.conn.commit()
         return True
