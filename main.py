@@ -75,7 +75,9 @@ def get_photo_dir():
     # Galeride kesinlikle görünmemesi için .nomedia dosyasını garanti altına alıyoruz
     nomedia_path = os.path.join(p_dir, ".nomedia")
     if not os.path.exists(nomedia_path):
-        try: open(nomedia_path, 'a').close()
+        try: 
+            with open(nomedia_path, 'w') as f:
+                f.write("")
         except: pass
         
     return p_dir
@@ -1778,7 +1780,10 @@ class EvimApp(App):
              is_fav, is_sell, is_lost, move_no, code, room_id, parent_id, item_emoji, item_photo) = row
             unit = "Adet"
              
-        child_count = DB.count_children(item_id)
+        # -1 ID'si silinmiş eşyalar içindir.
+        is_deleted = (item_id == -1)
+        child_count = DB.count_children(item_id) if not is_deleted else 0
+        
         box = self.themed_box(orientation="vertical", spacing=dp(8), padding=dp(16))
         t_lbl = Label(text=name, font_size=fs(18), bold=True, color=hex_rgba(th["text"]), size_hint_y=None)
         t_lbl.bind(width=lambda w, val: setattr(w, "text_size", (val, None)))
@@ -1818,22 +1823,29 @@ class EvimApp(App):
         info_lbl.bind(texture_size=lambda w, val: setattr(w, "height", val[1]))
         box.add_widget(info_lbl)
 
-        actions = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
-        actions.bind(minimum_height=actions.setter("height"))
-        def act_btn(text, color_key, cb):
-            b = RoundActionButton(text=text, size_hint_y=None, height=dph(44), font_size=fs(13), bold=True, bg_color=hex_rgba(th[color_key], 0.18), color=hex_rgba(th[color_key]))
-            b.bind(on_release=lambda *a: (self.close_popup(), Clock.schedule_once(lambda dt: cb(), 0.15)))
-            return b
+        # Eğer ürün silinmiş (geçmişten açılmış) ise, işlem butonlarını gizleyip sadece kapat butonu ekle.
+        if not is_deleted:
+            actions = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(8))
+            actions.bind(minimum_height=actions.setter("height"))
+            def act_btn(text, color_key, cb):
+                b = RoundActionButton(text=text, size_hint_y=None, height=dph(44), font_size=fs(13), bold=True, bg_color=hex_rgba(th[color_key], 0.18), color=hex_rgba(th[color_key]))
+                b.bind(on_release=lambda *a: (self.close_popup(), Clock.schedule_once(lambda dt: cb(), 0.15)))
+                return b
 
-        actions.add_widget(act_btn("Aç / İçine Gir", "primary", lambda: self.enter_item(item_id, name)))
-        if not self.guest_mode:
-            actions.add_widget(act_btn("Düzenle", "text_secondary", lambda: self.open_edit_item_dialog(item_id)))
-            actions.add_widget(act_btn("Taşı", "text_secondary", lambda: self.open_move_dialog(item_id)))
-            if child_count:
-                actions.add_widget(act_btn(f"Kutuyu Boşalt ({child_count} öğe)", "text_secondary", lambda: self._confirm_empty_box(item_id, name)))
-            actions.add_widget(act_btn("Sil", "danger", lambda: self._confirm_delete_item(item_id, name)))
+            actions.add_widget(act_btn("Aç / İçine Gir", "primary", lambda: self.enter_item(item_id, name)))
+            if not self.guest_mode:
+                actions.add_widget(act_btn("Düzenle", "text_secondary", lambda: self.open_edit_item_dialog(item_id)))
+                actions.add_widget(act_btn("Taşı", "text_secondary", lambda: self.open_move_dialog(item_id)))
+                if child_count:
+                    actions.add_widget(act_btn(f"Kutuyu Boşalt ({child_count} öğe)", "text_secondary", lambda: self._confirm_empty_box(item_id, name)))
+                actions.add_widget(act_btn("Sil", "danger", lambda: self._confirm_delete_item(item_id, name)))
 
-        self.open_auto_popup("", box, buttons_row=actions, scrollable=False)
+            self.open_auto_popup("", box, buttons_row=actions, scrollable=False)
+        else:
+            # Sadece KAPAT butonu
+            close_btn = Button(text="KAPAT", size_hint_y=None, height=dph(46), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(14), bold=True)
+            close_btn.bind(on_release=lambda *a: self.close_popup())
+            self.open_auto_popup("Silinmiş Eşya Bilgisi", box, buttons_row=close_btn, scrollable=False)
 
     def enter_item(self, item_id, name):
         if getattr(self.sm.transition, 'is_active', False):
@@ -1921,9 +1933,24 @@ class EvimApp(App):
             txt.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
             row_box.add_widget(txt)
             if restore_data:
-                restore_btn = Button(text="Geri Getir", size_hint=(None, None), size=(dp(90), dp(40)), background_normal="", background_color=hex_rgba(th["ok"], 0.2), color=hex_rgba(th["ok"]), font_size=fs(11))
+                # Silinenler menüsüne özel "?" ve "Geri Getir" buton barı eklendi
+                actions_box = BoxLayout(size_hint_x=None, width=dph(130), spacing=dp(6))
+                
+                info_btn = Button(text="?", size_hint=(None, None), size=(dph(38), dph(40)), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text_secondary"]), font_size=fs(14), bold=True)
+                
+                # Geçmişten ürünün sanal verisini okuyup "Detay" açması için sahte ID (-1) veriyoruz
+                rd = json.loads(restore_data)
+                fake_row = (-1, rd.get("name", name), rd.get("category", "Diğer"), rd.get("note", ""), rd.get("price", 0), rd.get("expiry", ""), rd.get("loaned_to", ""), rd.get("qty", 0), rd.get("qty_min", 0), rd.get("tags", ""), rd.get("is_favorite", False), rd.get("is_sell", False), rd.get("is_lost", False), rd.get("move_no", 0), "SİLİNMİŞ", rd.get("room_id", 0), rd.get("parent_id", None), rd.get("emoji", ""), rd.get("photo_path", ""), rd.get("unit", "Adet"))
+                
+                info_btn.bind(on_release=lambda inst, r=fake_row: Clock.schedule_once(lambda dt: self.open_item_detail(r), 0.1))
+                
+                restore_btn = Button(text="Geri Getir", size_hint=(None, None), size=(dph(86), dph(40)), background_normal="", background_color=hex_rgba(th["ok"], 0.2), color=hex_rgba(th["ok"]), font_size=fs(11), bold=True)
                 restore_btn.bind(on_release=lambda inst, i=hid: Clock.schedule_once(lambda dt: self._do_restore(i), 0.1))
-                row_box.add_widget(restore_btn)
+                
+                actions_box.add_widget(info_btn)
+                actions_box.add_widget(restore_btn)
+                row_box.add_widget(actions_box)
+                
             box.add_widget(row_box)
         scroll.add_widget(box)
         root.add_widget(scroll)
@@ -2393,7 +2420,9 @@ class EvimApp(App):
                 # .nomedia dosyasını oluştur (galeride görünmemesi için)
                 nomedia_path = os.path.join(temp_dir, ".nomedia")
                 if not os.path.exists(nomedia_path):
-                    try: open(nomedia_path, 'a').close()
+                    try: 
+                        with open(nomedia_path, 'w') as f:
+                            f.write("")
                     except: pass
             else:
                 temp_dir = get_photo_dir()
