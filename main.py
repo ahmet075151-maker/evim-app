@@ -2343,10 +2343,20 @@ class EvimApp(App):
                 return
 
             if platform == "android":
-                temp_dir = "/storage/emulated/0/DCIM"
+                temp_dir = "/storage/emulated/0/DCIM/Evim"
                 if not os.path.exists(temp_dir):
                     try: os.makedirs(temp_dir)
-                    except: temp_dir = "/storage/emulated/0/Download/Evim"
+                    except: 
+                        temp_dir = "/storage/emulated/0/Download/Evim"
+                        if not os.path.exists(temp_dir):
+                            try: os.makedirs(temp_dir)
+                            except: pass
+                            
+                # .nomedia dosyasını oluştur (galeride görünmemesi için)
+                nomedia_path = os.path.join(temp_dir, ".nomedia")
+                if not os.path.exists(nomedia_path):
+                    try: open(nomedia_path, 'a').close()
+                    except: pass
             else:
                 temp_dir = get_photo_dir()
 
