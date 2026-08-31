@@ -58,7 +58,6 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def get_internal_dir():
-    """Uygulamanın ASLA çökmeyecek, galeriden %100 gizli olan iç hafızası"""
     if platform == "android":
         from android.storage import app_storage_path
         return app_storage_path()
@@ -66,13 +65,15 @@ def get_internal_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 def get_photo_dir():
-    """Fotoğraflar bu iç hafızaya kaydedilir, böylece sistem galerisi onları asla bulamaz."""
-    p_dir = os.path.join(get_internal_dir(), "Fotograflar")
+    if platform == "android":
+        p_dir = "/storage/emulated/0/Download/Evim/Fotograflar"
+    else:
+        p_dir = os.path.join(get_internal_dir(), "Fotograflar")
+        
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
         except: pass
         
-    # Galeride kesinlikle görünmemesi için .nomedia dosyasını garanti altına alıyoruz
     nomedia_path = os.path.join(p_dir, ".nomedia")
     if not os.path.exists(nomedia_path):
         try: 
@@ -89,7 +90,6 @@ def get_settings_path():
     return os.path.join(get_internal_dir(), "ayarlar.txt")
 
 def get_download_path():
-    """Yedekler için her türlü formata (.db, .csv) izin veren genel klasör."""
     if platform == "android":
         base = "/storage/emulated/0/Download/Evim"
     else:
@@ -101,25 +101,20 @@ def get_download_path():
     return base
 
 def fix_image_orientation(image_path):
-    """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
     if not PILImage: return
     try:
         with PILImage.open(image_path) as img:
-            # 1. EXIF rotasyonunu düzelt
             if ImageOps and hasattr(ImageOps, 'exif_transpose'):
                 img = ImageOps.exif_transpose(img)
             
-            # 2. Resim genişliği yüksekliğinden fazlaysa (yataysa) zorla dik (portre) yap
             if img.width > img.height:
                 img = img.rotate(270, expand=True)
                 
-            # 3. Kivy'nin belleğini şişirip beyaz kutu vermemesi için resmi küçült
             max_size = 1920
             if img.width > max_size or img.height > max_size:
                 resample_filter = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
                 img.thumbnail((max_size, max_size), resample_filter)
                 
-            # 4. Format uyumsuzluklarına karşı standart RGB'ye çevir
             if img.mode != 'RGB':
                 img = img.convert('RGB')
                 
@@ -128,24 +123,25 @@ def fix_image_orientation(image_path):
         pass
 
 def migrate_old_photos():
-    """Önceki denemelerden kalan fotoğrafları güvenli iç hafızaya taşır."""
     try:
         new_p_dir = get_photo_dir()
         old_paths = []
         if platform == "android":
+            from android.storage import app_storage_path
             old_paths = [
+                app_storage_path() + "/Fotograflar",
                 "/storage/emulated/0/Evim/Fotograflar",
-                "/storage/emulated/0/Download/Evim/Fotograflar",
-                "/storage/emulated/0/Pictures/Evim/Fotograflar",
+                "/storage/emulated/0/DCIM/Evim"
             ]
         for old_p_dir in old_paths:
-            if os.path.exists(old_p_dir):
+            if old_p_dir and os.path.exists(old_p_dir) and old_p_dir != new_p_dir:
                 for f in os.listdir(old_p_dir):
-                    old_f = os.path.join(old_p_dir, f)
-                    new_f = os.path.join(new_p_dir, f)
-                    if not os.path.exists(new_f):
-                        try: shutil.move(old_f, new_f)
-                        except: pass
+                    if f.endswith(".jpg") or f.endswith(".png"):
+                        old_f = os.path.join(old_p_dir, f)
+                        new_f = os.path.join(new_p_dir, f)
+                        if not os.path.exists(new_f):
+                            try: shutil.move(old_f, new_f)
+                            except: pass
     except Exception:
         pass
 
@@ -944,7 +940,6 @@ class EvimApp(App):
         self.title = "Evim"
         self._active_dropdowns = []
         
-        # Olası taşınma hatalarını yakalayıp çökmeyi önle
         try:
             migrate_old_photos()
         except Exception:
@@ -2407,26 +2402,7 @@ class EvimApp(App):
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
 
-            if platform == "android":
-                temp_dir = "/storage/emulated/0/DCIM/Evim"
-                if not os.path.exists(temp_dir):
-                    try: os.makedirs(temp_dir)
-                    except: 
-                        temp_dir = "/storage/emulated/0/Download/Evim"
-                        if not os.path.exists(temp_dir):
-                            try: os.makedirs(temp_dir)
-                            except: pass
-                            
-                # .nomedia dosyasını oluştur (galeride görünmemesi için)
-                nomedia_path = os.path.join(temp_dir, ".nomedia")
-                if not os.path.exists(nomedia_path):
-                    try: 
-                        with open(nomedia_path, 'w') as f:
-                            f.write("")
-                    except: pass
-            else:
-                temp_dir = get_photo_dir()
-
+            temp_dir = get_photo_dir()
             temp_filename = os.path.join(temp_dir, f"cam_{uuid.uuid4().hex[:8]}.jpg")
             
             def _on_complete(filepath):
