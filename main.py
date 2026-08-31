@@ -652,7 +652,8 @@ class Database:
                 w.writerow([room_name, row[1], row[2], row[3], row[4], row[7], unit_val, row[8], row[9], row[14]])
         return path
 
-DB = Database()
+# Modül seviyesinde hata çıkmaması için None tanımlanıyor
+DB = None
 
 # ---------------------------------------------------------------------------
 # Özel Görsel Bileşenler (Custom Widgets)
@@ -934,6 +935,10 @@ class EvimApp(App):
             migrate_old_photos()
         except Exception:
             pass
+            
+        global DB
+        if DB is None:
+            DB = Database()
         
         settings = load_settings()
         self.font_scale = settings["font_scale"]
@@ -1384,7 +1389,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width, None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -1395,7 +1400,7 @@ class EvimApp(App):
             cat_grid.add_widget(cb)
         content.add_widget(cat_grid)
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width, None)))
         content.add_widget(lbl_rooms)
         rooms = DB.get_rooms()
         grid_cols = 1 if len(rooms) == 1 else 2
