@@ -82,14 +82,14 @@ def get_settings_path():
 def get_download_path():
     """Yedekler için her türlü formata (.db, .csv) izin veren genel klasör."""
     if platform == "android":
-        # Android'de izin (Errno 1) hatası olmaması için doğrudan ana Download klasörünü kullanıyoruz
-        return "/storage/emulated/0/Download"
+        base = "/storage/emulated/0/Download/Evim"
     else:
         base = os.path.join(get_internal_dir(), "Evim_Yedek")
-        if not os.path.exists(base):
-            try: os.makedirs(base)
-            except: pass
-        return base
+        
+    if not os.path.exists(base):
+        try: os.makedirs(base)
+        except: pass
+    return base
 
 def fix_image_orientation(image_path):
     """Görüntünün yönünü zorla dik yapar ve beyaz kutu hatasını önlemek için optimize eder."""
@@ -2342,17 +2342,27 @@ class EvimApp(App):
                 self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
                 return
 
-            temp_filename = os.path.join(get_photo_dir(), f"cam_{uuid.uuid4().hex[:8]}.jpg")
+            if platform == "android":
+                temp_dir = "/storage/emulated/0/DCIM"
+                if not os.path.exists(temp_dir):
+                    try: os.makedirs(temp_dir)
+                    except: temp_dir = "/storage/emulated/0/Download/Evim"
+            else:
+                temp_dir = get_photo_dir()
+
+            temp_filename = os.path.join(temp_dir, f"cam_{uuid.uuid4().hex[:8]}.jpg")
             
             def _on_complete(filepath):
                 def check_and_apply(dt):
                     path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
                     if os.path.exists(path_to_check) and os.path.getsize(path_to_check) > 0:
                         on_photo_picked(path_to_check)
+                        try: os.remove(path_to_check)
+                        except: pass
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
                 
-                Clock.schedule_once(check_and_apply, 0.8)
+                Clock.schedule_once(check_and_apply, 1.0)
 
             try:
                 camera.take_picture(filename=temp_filename, on_complete=_on_complete)
