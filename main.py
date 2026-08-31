@@ -71,6 +71,13 @@ def get_photo_dir():
     if not os.path.exists(p_dir):
         try: os.makedirs(p_dir)
         except: pass
+        
+    # Galeride kesinlikle görünmemesi için .nomedia dosyasını garanti altına alıyoruz
+    nomedia_path = os.path.join(p_dir, ".nomedia")
+    if not os.path.exists(nomedia_path):
+        try: open(nomedia_path, 'a').close()
+        except: pass
+        
     return p_dir
 
 def get_db_path():
@@ -634,6 +641,11 @@ class Database:
     def get_low_stock_items(self):
         c = self.conn.cursor()
         c.execute(f"SELECT {self.ITEM_COLS} FROM items WHERE qty_min > 0 AND qty <= qty_min ORDER BY id")
+        return c.fetchall()
+        
+    def get_recent_items(self, limit=20):
+        c = self.conn.cursor()
+        c.execute(f"SELECT {self.ITEM_COLS} FROM items ORDER BY id DESC LIMIT ?", (limit,))
         return c.fetchall()
 
     def export_csv(self):
@@ -1368,6 +1380,22 @@ class EvimApp(App):
         fab_container.add_widget(main_fab)
         root_layout.add_widget(fab_container)
 
+    # Menülerde (?) butonunu ekleyen ortak yardımcı metod
+    def _build_list_item_with_info(self, text, item_id, row):
+        th = self.theme()
+        box = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(4))
+        
+        btn = Button(text=text, background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
+        btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
+        btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
+        
+        info_dot = Button(text="?", font_size=fs(14), bold=True, color=hex_rgba(th["text_secondary"]), size_hint=(None, 1), width=dph(46), background_normal="", background_color=hex_rgba(th["surface2"]))
+        info_dot.bind(on_release=lambda inst, r=row: Clock.schedule_once(lambda dt: self.open_item_detail(r), 0.1))
+        
+        box.add_widget(btn)
+        box.add_widget(info_dot)
+        return box
+
     def refresh_home(self):
         th = self.theme()
         screen = self.sm.get_screen("home")
@@ -1430,10 +1458,9 @@ class EvimApp(App):
             item_id, name = row[0], row[1]
             path = DB.get_path(item_id)
             crumb = " › ".join([DB.get_room(row[15])[1]] + [p[1] for p in path[:-1]] + [name]) if path else name
-            b = Button(text=f"{name}   ({crumb})", size_hint_y=None, height=dph(42), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
-            b.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            b.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            self._results_box.add_widget(b)
+            
+            row_widget = self._build_list_item_with_info(f"{name}   ({crumb})", item_id, row)
+            self._results_box.add_widget(row_widget)
 
     def jump_to_item(self, item_id):
         if getattr(self.sm.transition, 'is_active', False):
@@ -1959,9 +1986,20 @@ class EvimApp(App):
             info_col.add_widget(t_lbl)
             info_col.add_widget(s_lbl)
             card.add_widget(info_col)
-            go_btn = Button(text="Git", size_hint=(None, None), size=(dph(50), dph(38)), background_normal="", background_color=hex_rgba(th["primary"], 0.2), color=hex_rgba(th["primary"]), font_size=fs(12), bold=True)
+            
+            # Alışveriş listesine "?" Butonu Eklendi
+            actions_box = BoxLayout(size_hint_x=None, width=dph(90), spacing=dp(6))
+            
+            info_btn = Button(text="?", size_hint=(None, None), size=(dph(38), dph(38)), background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text_secondary"]), font_size=fs(14), bold=True)
+            info_btn.bind(on_release=lambda inst, r=row: Clock.schedule_once(lambda dt: self.open_item_detail(r), 0.1))
+            
+            go_btn = Button(text="Git", size_hint=(None, None), size=(dph(46), dph(38)), background_normal="", background_color=hex_rgba(th["primary"], 0.2), color=hex_rgba(th["primary"]), font_size=fs(12), bold=True)
             go_btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            card.add_widget(go_btn)
+            
+            actions_box.add_widget(info_btn)
+            actions_box.add_widget(go_btn)
+            card.add_widget(actions_box)
+            
             box.add_widget(card)
         scroll.add_widget(box)
         root.add_widget(scroll)
@@ -1991,10 +2029,10 @@ class EvimApp(App):
             room_id = row[15]
             path = DB.get_path(item_id)
             crumb = " › ".join([DB.get_room(room_id)[1]] + [p[1] for p in path[:-1]]) if path else ""
-            btn = Button(text=f"{name}   ({crumb})", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
-            btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            box.add_widget(btn)
+            
+            row_widget = self._build_list_item_with_info(f"{name}   ({crumb})", item_id, row)
+            box.add_widget(row_widget)
+            
         scroll.add_widget(box)
         root.add_widget(scroll)
         screen.add_widget(root)
@@ -2023,10 +2061,10 @@ class EvimApp(App):
             room_id = row[15]
             path = DB.get_path(item_id)
             crumb = " › ".join([DB.get_room(room_id)[1]] + [p[1] for p in path[:-1]]) if path else ""
-            btn = Button(text=f"{name}   ({crumb})", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
-            btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            box.add_widget(btn)
+            
+            row_widget = self._build_list_item_with_info(f"{name}   ({crumb})", item_id, row)
+            box.add_widget(row_widget)
+            
         scroll.add_widget(box)
         root.add_widget(scroll)
         screen.add_widget(root)
@@ -2054,10 +2092,10 @@ class EvimApp(App):
             item_id, name = row[0], row[1]
             path = DB.get_path(item_id)
             crumb = " › ".join([p[1] for p in path]) if path else name
-            btn = Button(text=f"{name}   ({crumb})", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left", shorten=True)
-            btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            box.add_widget(btn)
+            
+            row_widget = self._build_list_item_with_info(f"{name}   ({crumb})", item_id, row)
+            box.add_widget(row_widget)
+            
         scroll.add_widget(box)
         root.add_widget(scroll)
         screen.add_widget(root)
@@ -2089,10 +2127,10 @@ class EvimApp(App):
             box.add_widget(empty_lbl)
         for row in rows:
             item_id, name, move_no = row[0], row[1], row[13]
-            btn = Button(text=f"Koli #{move_no} — {name}", size_hint_y=None, height=dph(44), background_normal="", background_color=hex_rgba(th["surface"]), color=hex_rgba(th["text"]), font_size=fs(13), halign="left")
-            btn.bind(size=lambda w, *a: setattr(w, "text_size", (w.width - dp(16), None)))
-            btn.bind(on_release=lambda inst, iid=item_id: Clock.schedule_once(lambda dt: self.jump_to_item(iid), 0.1))
-            box.add_widget(btn)
+            
+            row_widget = self._build_list_item_with_info(f"Koli #{move_no} — {name}", item_id, row)
+            box.add_widget(row_widget)
+            
         scroll.add_widget(box)
         root.add_widget(scroll)
         screen.add_widget(root)
