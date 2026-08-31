@@ -1377,7 +1377,6 @@ class EvimApp(App):
         fab_container.add_widget(main_fab)
         root_layout.add_widget(fab_container)
 
-    # Menülerde (?) butonunu ekleyen ortak yardımcı metod
     def _build_list_item_with_info(self, text, item_id, row):
         th = self.theme()
         box = BoxLayout(size_hint_y=None, height=dph(46), spacing=dp(4))
@@ -2403,22 +2402,25 @@ class EvimApp(App):
                 return
 
             temp_dir = get_photo_dir()
-            temp_filename = os.path.join(temp_dir, f"cam_{uuid.uuid4().hex[:8]}.jpg")
+            dest_filename = os.path.join(temp_dir, f"photo_{uuid.uuid4().hex[:8]}.jpg")
             
             def _on_complete(filepath):
                 def check_and_apply(dt):
-                    path_to_check = filepath if (filepath and os.path.exists(filepath)) else temp_filename
+                    path_to_check = filepath if (filepath and os.path.exists(filepath)) else dest_filename
                     if os.path.exists(path_to_check) and os.path.getsize(path_to_check) > 0:
-                        on_photo_picked(path_to_check)
-                        try: os.remove(path_to_check)
-                        except: pass
+                        try:
+                            fix_image_orientation(path_to_check)
+                        except:
+                            pass
+                        photo_state["current_file"] = path_to_check
+                        update_photo_preview()
                     else:
                         self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
                 
                 Clock.schedule_once(check_and_apply, 1.0)
 
             try:
-                camera.take_picture(filename=temp_filename, on_complete=_on_complete)
+                camera.take_picture(filename=dest_filename, on_complete=_on_complete)
             except Exception as e:
                 self._show_message("Hata", f"Kamera açılamadı: {e}")
 
