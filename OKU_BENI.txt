@@ -66,6 +66,29 @@ derleme sunucusunda KivyMD'nin pip kurulumu kararsız çıktığı için
 tamamen kaldırıldı; görsel tasarım (yuvarlak kartlar, renkli
 avatarlar) elle çizilerek aynı şekilde korundu.
 
+FOTOĞRAF / KAMERA HAKKINDA (sürüm 1.1)
+---------------------------------------
+- Eşyalara fotoğraf galeriden ya da kamera ile eklenebilir.
+- Kamera ile çekilen fotoğraf artık DOĞRUDAN paylaşılı klasöre yazılmıyor:
+  önce uygulamanın kendi MediaStore kaydı oluşturuluyor (Android 10 ve üzeri),
+  fotoğraf buradan alınıp uygulamanın kendi fotoğraf klasörüne kopyalanıyor.
+  Eski davranışta dosyayı kamera uygulaması oluşturduğu için Android 11+
+  "scoped storage" kuralı nedeniyle uygulamamız o dosyayı OKUYAMIYORDU ve
+  ekranda beyaz/boş kare görünüyordu.
+- Fotoğraf klasörü otomatik seçilir: "/storage/emulated/0/Download/Evim/
+  Fotograflar" yazılıp OKUNABİLİYORSA kullanılır, değilse uygulamanın kendi
+  (izin gerektirmeyen) klasörüne geçilir. Eski sürümlerde kalmış fotoğraflar
+  açılışta yeni klasöre taşınır; DB'de sadece dosya adı durduğu için eski
+  yollar da aranır.
+- Ekranlarda artık "dosya var mı" değil "dosya okunup gösterilebiliyor mu"
+  kontrol ediliyor; okunamayan fotoğraf gösterilmiyor ve KAYDET sırasında
+  fotoğrafsız kaydediliyor (beyaz kare yerine kısa bir uyarı yazısı çıkıyor).
+- Fotoğraflar en fazla 1600 px'e küçültülüp %85 JPEG olarak saklanır; böylece
+  bellek/yük sorunları nedeniyle boş görünme riski azalır. Yatay fotoğraflar
+  artık zorla dikeye çevrilmiyor (yönlendirme EXIF bilgisine göre yapılıyor).
+- Kamera izni verilmediyse uygulama artık beyaz kare değil, "Kamera izni
+  verilmedi" uyarısı gösteriyor.
+
 GELİŞTİRME NOTU
 -----------------
 Uygulamanın Python kaynak kodu "main.py" dosyasındadır, dilerseniz
