@@ -4,7 +4,7 @@ package.name = evim
 package.domain = org.ahmetevim
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,db
-version = 1.0
+version = 1.1
 requirements = python3==3.11.6,hostpython3==3.11.6,kivy==2.3.0,android,plyer,pyjnius,pillow
 icon.filename = %(source.dir)s/icon.png
 orientation = portrait

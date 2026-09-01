@@ -64,24 +64,198 @@ def get_internal_dir():
     else:
         return os.path.dirname(os.path.abspath(__file__))
 
-def get_photo_dir():
-    if platform == "android":
-        p_dir = "/storage/emulated/0/Download/Evim/Fotograflar"
-    else:
-        p_dir = os.path.join(get_internal_dir(), "Fotograflar")
-        
-    if not os.path.exists(p_dir):
-        try: os.makedirs(p_dir)
-        except: pass
-        
-    nomedia_path = os.path.join(p_dir, ".nomedia")
-    if not os.path.exists(nomedia_path):
-        try: 
-            with open(nomedia_path, 'w') as f:
+# Eski sürümlerde kullanılan klasörler: DB'de sadece dosya adı (basename) durduğu
+# için fotoğraflar bu klasörlerde de aranır.
+LEGACY_PHOTO_DIRS = [
+    "/storage/emulated/0/Download/Evim/Fotograflar",
+    "/storage/emulated/0/Evim/Fotograflar",
+    "/storage/emulated/0/DCIM/Evim",
+]
+
+_photo_dir_cache = {"dir": None}
+
+
+def _ensure_dir(path):
+    """Klasörü yoksa oluşturur, True/False döner."""
+    try:
+        if not os.path.isdir(path):
+            os.makedirs(path)
+        return os.path.isdir(path)
+    except Exception:
+        return False
+
+
+def _dir_usable(path):
+    """Klasör hem yazılabilir hem de SONRADAN OKUNABİLİR mi?
+
+    Android 11+ (scoped storage) sadece 'yazılabilir' olan klasörler yetmez:
+    başka bir uygulamanın (örn. kamera) oluşturduğu dosyaları kendi uygulamamız
+    okuyamaz. Bu yüzden test dosyasını biz oluşturup geri okuyoruz.
+    """
+    if not _ensure_dir(path):
+        return False
+    probe = os.path.join(path, ".evim_probe_%s.tmp" % uuid.uuid4().hex[:6])
+    try:
+        with open(probe, "wb") as f:
+            f.write(b"ok")
+        with open(probe, "rb") as f:
+            ok = (f.read() == b"ok")
+        return bool(ok)
+    except Exception:
+        return False
+    finally:
+        try:
+            if os.path.exists(probe):
+                os.remove(probe)
+        except Exception:
+            pass
+
+
+def _add_nomedia(path):
+    try:
+        nomedia_path = os.path.join(path, ".nomedia")
+        if not os.path.exists(nomedia_path):
+            with open(nomedia_path, "w") as f:
                 f.write("")
-        except: pass
-        
-    return p_dir
+    except Exception:
+        pass
+
+
+def get_photo_dir():
+    """Uygulamanın fotoğrafları sakladığı klasör (yaz+oku testinden geçmiş)."""
+    if _photo_dir_cache["dir"]:
+        return _photo_dir_cache["dir"]
+
+    private_dir = os.path.join(get_internal_dir(), "Fotograflar")
+    if platform == "android":
+        candidates = ["/storage/emulated/0/Download/Evim/Fotograflar", private_dir]
+    else:
+        candidates = [private_dir]
+
+    chosen = None
+    for cand in candidates:
+        if _dir_usable(cand):
+            chosen = cand
+            break
+    if chosen is None:
+        chosen = private_dir
+        _ensure_dir(chosen)
+
+    _add_nomedia(chosen)
+    _photo_dir_cache["dir"] = chosen
+    return chosen
+
+
+def all_photo_dirs():
+    """Fotoğraf aramasının yapılacağı klasörler (sıra önemli)."""
+    dirs, seen = [], set()
+    for d in [get_photo_dir(), get_internal_dir()] + (LEGACY_PHOTO_DIRS if platform == "android" else []):
+        try:
+            real = os.path.abspath(d)
+        except Exception:
+            continue
+        if real and real not in seen and os.path.isdir(d):
+            seen.add(real)
+            dirs.append(d)
+    return dirs
+
+
+def resolve_photo_path(stored):
+    """DB'deki değeri (basename veya tam yol) gerçek okunabilir yola çevirir.
+
+    Bulunamazsa "" döner — böylece ekranda boş/beyaz kare yerine 'fotoğraf yok'
+    yazabiliriz.
+    """
+    if not stored:
+        return ""
+    p = str(stored).strip()
+    if not p:
+        return ""
+    # 1) Tam yol olarak kaydedilmişse
+    if p.startswith("/") and os.path.isfile(p):
+        if os.access(p, os.R_OK):
+            return p
+    name = os.path.basename(p)
+    if not name:
+        return ""
+    # 2) bilinen tüm fotoğraf klasörlerinde ara
+    for d in all_photo_dirs():
+        cand = os.path.join(d, name)
+        try:
+            if os.path.isfile(cand) and os.access(cand, os.R_OK):
+                return cand
+        except Exception:
+            continue
+    # 3) son çare: uygulama içi klasör (eski davranış)
+    cand = os.path.join(get_photo_dir(), p)
+    try:
+        if os.path.isfile(cand) and os.access(cand, os.R_OK):
+            return cand
+    except Exception:
+        pass
+    return ""
+
+
+def photo_stored_value(full_path):
+    """Tam yolu DB'ye yazılacak değere çevirir (fotoğraf klasöründeyse basename)."""
+    if not full_path:
+        return ""
+    try:
+        if os.path.dirname(os.path.abspath(full_path)) == os.path.abspath(get_photo_dir()):
+            return os.path.basename(full_path)
+    except Exception:
+        pass
+    return full_path
+
+
+def verify_image(path):
+    """Dosya gerçekten okunup çözümlenebiliyor mu? (beyaz kare korunmasını önler)"""
+    if not path:
+        return False
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) < 100:
+            return False
+        if not os.access(path, os.R_OK):
+            return False
+    except Exception:
+        return False
+    if PILImage is not None:
+        try:
+            with PILImage.open(path) as im:
+                im.load()
+                if im.width < 8 or im.height < 8:
+                    return False
+            return True
+        except Exception:
+            return False
+    # Pillow yoksa dosya imzasına bak
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except Exception:
+        return False
+    return (head[:3] == b"\xff\xd8\xff" or head[:8] == b"\x89PNG\r\n\x1a\n"
+            or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"))
+
+
+def new_photo_name():
+    return "photo_%s.jpg" % uuid.uuid4().hex[:8]
+
+
+def pick_display_photo(current_file="", existing_file=""):
+    """Ekranda gösterilecek fotoğrafın yolunu seçer.
+
+    ÖNEMLİ: eski kod yalnızca 'dosya var mı' diye bakıyordu; dosya var ama
+    okunamıyor ya da yarım yazılmışsa ortada boş (beyaz) bir kare kalıyordu.
+    Burada dosyanın gerçekten çözümlenebilmesi şart.
+    """
+    path = ""
+    if current_file:
+        path = current_file if verify_image(current_file) else resolve_photo_path(current_file)
+    # yeni seçilen fotoğraf okunamıyorsa eski olanı göster (kaydetme de öyle yapar)
+    if (not path or not verify_image(path)) and existing_file:
+        path = resolve_photo_path(existing_file)
+    return path if (path and verify_image(path)) else ""
 
 def get_db_path():
     return os.path.join(get_internal_dir(), "evim.db")
@@ -101,49 +275,587 @@ def get_download_path():
     return base
 
 def fix_image_orientation(image_path):
-    if not PILImage: return
+    """Fotoğrafı EXIF'e göre doğrultur, küçültür ve geri yazılır.
+
+    ÖNEMLİ: eski kod dosyayı OKURKEN aynı dosyanın üzerine yazıyordu; kamera
+    çıktısı gibi büyük JPEG'lerde bu, yarım/bozuk (ekranda beyaz kare görünen)
+    dosyalar üretiyordu. Artık önce tamamen belleğe alınıp geçici dosyaya
+    yazılıyor, sonra atomik olarak yerine konuyor.
+    """
+    if not image_path or not os.path.exists(image_path):
+        return image_path
+    if PILImage is None:
+        return image_path
+    tmp_path = image_path + ".tmp.jpg"
     try:
         with PILImage.open(image_path) as img:
-            if ImageOps and hasattr(ImageOps, 'exif_transpose'):
-                img = ImageOps.exif_transpose(img)
-            
-            if img.width > img.height:
-                img = img.rotate(270, expand=True)
-                
-            max_size = 1920
+            img.load()  # dosya kapatılmadan pikselleri tamamen oku
+            if ImageOps is not None and hasattr(ImageOps, "exif_transpose"):
+                try:
+                    rotated = ImageOps.exif_transpose(img)
+                    if rotated is not None:
+                        img = rotated
+                        img.load()
+                except Exception:
+                    pass
+
+            max_size = 1600
             if img.width > max_size or img.height > max_size:
-                resample_filter = getattr(PILImage, "Resampling", PILImage).LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
-                img.thumbnail((max_size, max_size), resample_filter)
-                
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-                
-            img.save(image_path, "JPEG", quality=85)
+                resample = getattr(PILImage, "Resampling", PILImage).LANCZOS \
+                    if hasattr(PILImage, "Resampling") else PILImage.LANCZOS
+                img.thumbnail((max_size, max_size), resample)
+
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+
+            with open(tmp_path, "wb") as out:
+                img.save(out, "JPEG", quality=85)
+
+        # yeni dosya çözümlenebiliyor mu, kontrol et
+        if not verify_image(tmp_path):
+            raise IOError("yeniden yazılan fotoğraf doğrulanamadı")
+
+        # dosya salt-okunarsa (başka uygulamanın oluşturduğu dosya gibi) üzerine
+        # yazamayız -> geçici dosyayı olduğu gibi yeni yol olarak kullan
+        try:
+            os.replace(tmp_path, image_path)
+            try:
+                os.chmod(image_path, 0o644)
+            except Exception:
+                pass
+            return image_path
+        except Exception:
+            final_alt = os.path.join(os.path.dirname(image_path) or ".",
+                                     "fixed_" + os.path.basename(image_path))
+            try:
+                os.replace(tmp_path, final_alt)
+                return final_alt
+            except Exception:
+                pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
     except Exception:
-        pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+    return image_path
+
+
+def store_photo(src_path):
+    """Bir fotoğrafı kalıcı fotoğraf klasörüne kopyalar.
+
+    (okunabilir_final_yol, db_yazilacak_deger) döndürür. Kopyalama başarısız
+    olursa kaynak dosyayı olduğu gibi kullanmayı dener.
+    """
+    if not src_path or not os.path.exists(src_path):
+        return "", ""
+    p_dir = get_photo_dir()
+    try:
+        dest = os.path.join(p_dir, new_photo_name())
+    except Exception:
+        dest = ""
+
+    final = ""
+    if dest:
+        try:
+            # kaynak zaten hedef klasördeyse gereksiz kopya çıkarma
+            try:
+                if os.path.dirname(os.path.abspath(src_path)) == os.path.abspath(p_dir):
+                    dest = src_path
+            except Exception:
+                pass
+            if os.path.abspath(src_path) != os.path.abspath(dest):
+                shutil.copyfile(src_path, dest)
+            final = fix_image_orientation(dest)
+        except Exception:
+            final = ""
+        if final and not verify_image(final):
+            # bozuk kopyayı bırakma
+            try:
+                os.remove(final)
+            except Exception:
+                pass
+            final = ""
+
+    if not final and verify_image(src_path):
+        final = src_path
+
+    if not final:
+        return "", ""
+    return final, photo_stored_value(final)
+
 
 def migrate_old_photos():
     try:
         new_p_dir = get_photo_dir()
         old_paths = []
         if platform == "android":
-            from android.storage import app_storage_path
-            old_paths = [
-                app_storage_path() + "/Fotograflar",
-                "/storage/emulated/0/Evim/Fotograflar",
-                "/storage/emulated/0/DCIM/Evim"
-            ]
+            try:
+                from android.storage import app_storage_path
+                old_paths.append(app_storage_path() + "/Fotograflar")
+            except Exception:
+                pass
+            old_paths += LEGACY_PHOTO_DIRS
         for old_p_dir in old_paths:
-            if old_p_dir and os.path.exists(old_p_dir) and old_p_dir != new_p_dir:
-                for f in os.listdir(old_p_dir):
-                    if f.endswith(".jpg") or f.endswith(".png"):
-                        old_f = os.path.join(old_p_dir, f)
-                        new_f = os.path.join(new_p_dir, f)
-                        if not os.path.exists(new_f):
-                            try: shutil.move(old_f, new_f)
-                            except: pass
+            if old_p_dir and old_p_dir != new_p_dir and os.path.isdir(old_p_dir):
+                try:
+                    names = os.listdir(old_p_dir)
+                except Exception:
+                    continue
+                for f in names:
+                    if not (f.endswith(".jpg") or f.endswith(".png")):
+                        continue
+                    old_f = os.path.join(old_p_dir, f)
+                    new_f = os.path.join(new_p_dir, f)
+                    if os.path.exists(new_f):
+                        continue
+                    try:
+                        shutil.copyfile(old_f, new_f)
+                        if verify_image(new_f):
+                            try:
+                                os.remove(old_f)
+                            except Exception:
+                                pass
+                        else:
+                            os.remove(new_f)
+                    except Exception:
+                        continue
     except Exception:
         pass
+
+def _cam_log(msg):
+    try:
+        print("[EvimKamera] %s" % msg)
+    except Exception:
+        pass
+
+
+def _android_activity():
+    from jnius import autoclass
+    return autoclass('org.kivy.android.PythonActivity').mActivity
+
+
+_api_cache = {}
+
+
+def android_api_level():
+    if "api" not in _api_cache:
+        lvl = 0
+        if platform == "android":
+            try:
+                from jnius import autoclass
+                lvl = int(autoclass('android.os.Build$VERSION').SDK_INT)
+            except Exception:
+                lvl = 0
+        _api_cache["api"] = lvl
+    return _api_cache["api"]
+
+
+def _uri_real_path(uri):
+    """content:// URI'sinin diskteki gerçek yolu (MediaStore '_data' sütunu)."""
+    try:
+        activity = _android_activity()
+        cursor = activity.getContentResolver().query(uri, None, None, None, None)
+        if cursor is None:
+            return ""
+        try:
+            if cursor.moveToFirst():
+                idx = cursor.getColumnIndex('_data')
+                if idx >= 0:
+                    return cursor.getString(idx) or ""
+        finally:
+            cursor.close()
+    except Exception as e:
+        _cam_log("_uri_real_path: %s" % e)
+    return ""
+
+
+def _copy_uri_to_file(uri, dest_path):
+    """content:// / file:// URI'sindeki baytlar kendi dosyamıza yazarız.
+
+    Böylece dosyanın sahibi biz oluruz; Android 11+ scoped storage'da ancak bu
+    şekilde dosyayı geri okuyabiliriz.
+    """
+    try:
+        activity = _android_activity()
+        ins = activity.getContentResolver().openInputStream(uri)
+        if ins is None:
+            return False
+        from jnius import autoclass
+        fos = autoclass('java.io.FileOutputStream')(dest_path)
+        ok = False
+        try:
+            try:
+                # java.nio.channels.Channels.newChannel(ins) -> fos.transferFrom
+                Channels = autoclass('java.nio.channels.Channels')
+                channel = Channels.newChannel(ins)
+                try:
+                    fos.getChannel().transferFrom(channel, 0, 9223372036854775807)
+                    ok = True
+                finally:
+                    try:
+                        channel.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                _cam_log("transferFrom başarısız (%s), bayt bayt deneniyor" % e)
+                buf = autoclass('[B')(65536)
+                n = int(ins.read(buf))
+                while n >= 0:
+                    fos.write(buf, 0, n)
+                    n = int(ins.read(buf))
+                ok = True
+        finally:
+            try:
+                fos.close()
+            except Exception:
+                pass
+            try:
+                ins.close()
+            except Exception:
+                pass
+        return bool(ok) and os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
+    except Exception as e:
+        _cam_log("_copy_uri_to_file: %s" % e)
+        return False
+
+
+def _touch_own_file(path):
+    """Dosyayı BİZ oluşturuyoruz (boş) — böylece diske kamera yazsa bile sahibi
+    biz kalırız ve dosyayı okuyabiliriz."""
+    try:
+        with open(path, "ab"):
+            pass
+        return True
+    except Exception as e:
+        _cam_log("_touch_own_file: %s" % e)
+        return False
+
+
+class CameraCapture:
+    """Sistem kamerasıyla fotoğraf çekme (plyer'daki file:// sorununu giderir).
+
+    plyer kamera uygulamasına 'file://.../photo_x.jpg' verir; Android 11+'ta
+    kamera uygulamasının oluşturduğu bu dosyayı kendi uygulamamız OKUYAMAZ
+    (scoped storage) ve Kivy boş/beyaz bir kare gösterir. Burada:
+
+      1) hedef dosyayı önce biz oluştururuz (dosya bizde kalır), VEYA
+      2) API 29+'ta kendi MediaStore girdimizi oluşturup kameraya content:// URI
+         veririz (izin grant'ı ile), sonra içeriği kendi klasörümüze kopyalarız,
+      3) fotoğrafı doğrularız (okunamıyorsa beyaz kare yerine net uyarı).
+    """
+    REQ = 0x2E1
+    RESULT_OK = -1
+    RESULT_CANCELED = 0
+    _active = None
+
+    def __init__(self, on_done):
+        self.on_done = on_done
+        self.dest = ""
+        self.ms_uri = None
+        self.ms_path = ""
+        self._bound = False
+        self._done = False
+        self._attempts = 0
+        self._result_intent = None
+        self._result_code = None
+        self._started_at = 0.0
+
+    # ------------------------------------------------------------------ start
+    @classmethod
+    def run(cls, on_done):
+        if cls._active is not None:
+            # kamera uygulaması çökerse sonuç gelmez; 40 sn sonra bayrağı devral
+            try:
+                stale = (Clock.get_time() - cls._active._started_at) > 40
+            except Exception:
+                stale = True
+            if stale:
+                cls._active.finish_with_error("")
+            else:
+                on_done("", "Bir kamera çekimi hâlâ sürüyor, lütfen bekleyin.")
+                return False
+        obj = cls(on_done)
+        obj._started_at = Clock.get_time()
+        cls._active = obj
+        try:
+            obj.start()
+        except Exception as e:
+            obj.finish_with_error("Kamera açılamadı: %s" % e)
+        return True
+
+    def start(self):
+        if platform != "android":
+            # masaüstünde sistem kamerası yok: plyer deneriz (genelde yok)
+            if camera is None:
+                return self.finish_with_error("Kamera yalnızca Android sürümünde çalışır.")
+            self.dest = os.path.join(get_photo_dir(), new_photo_name())
+            _touch_own_file(self.dest)
+            camera.take_picture(filename=self.dest, on_complete=self._plyer_done)
+            return
+
+        try:
+            from android import activity as android_activity
+        except Exception as e:
+            return self.finish_with_error("Android etkinlik katmanı yüklenemedi: %s" % e)
+
+        # CAMERA izni manifest'te tanımlı; verilmemişse intent SecurityException atar
+        try:
+            from android.permissions import Permission, check_permissions
+            granted = Permission.CAMERA in check_permissions([Permission.CAMERA])
+            if not granted:
+                try:
+                    from android.permissions import request_permissions
+                    request_permissions([Permission.CAMERA])
+                except Exception:
+                    pass
+                return self.finish_with_error(
+                    "Kamera izni verilmedi.\n\nTelefon: Ayarlar › Uygulamalar › Evim › "
+                    "İzinler › Kamera › İzin ver, sonra tekrar deneyin.")
+        except Exception:
+            pass
+
+        try:
+            from jnius import autoclass, cast
+        except Exception as e:
+            return self.finish_with_error("Android köprüsü (jnius) yüklenemedi: %s" % e)
+
+        try:
+            Intent = autoclass('android.content.Intent')
+            MediaStore = autoclass('android.provider.MediaStore')
+            Uri = autoclass('android.net.Uri')
+            activity = _android_activity()
+        except Exception as e:
+            return self.finish_with_error("Android sınıfları yüklenemedi: %s" % e)
+
+        p_dir = get_photo_dir()
+        self.dest = os.path.join(p_dir, new_photo_name())
+        _touch_own_file(self.dest)
+
+        # 1) API 29+: kendi MediaStore girdimizi oluştur (en güvenilir yol)
+        if android_api_level() >= 29:
+            try:
+                ContentValues = autoclass('android.content.ContentValues')
+                values = ContentValues()
+                tmp_name = "evim_kamera_%s.jpg" % uuid.uuid4().hex[:8]
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, tmp_name)
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/EvimTmp")
+                # ContentValues.put overload karışıklığına karşı açık Integer
+                values.put(MediaStore.Images.Media.IS_PENDING, autoclass('java.lang.Integer')(1))
+                uri = activity.getContentResolver().insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if uri is not None:
+                    self.ms_uri = uri
+                    self.ms_path = _uri_real_path(uri)
+                    _cam_log("mediastore uri ok, path=%s" % (self.ms_path or "-"))
+            except Exception as e:
+                _cam_log("mediastore insert failed: %s" % e)
+                self.ms_uri = None
+
+        # 2) hedef: MediaStore URI'sı ya da (eski Android) kendi dosyamız
+        if self.ms_uri is not None:
+            out_obj = self.ms_uri
+        else:
+            out_obj = Uri.parse('file://' + self.dest)
+
+        try:
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cast('android.os.Parcelable', out_obj))
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            android_activity.unbind(on_activity_result=self._on_activity_result)
+            android_activity.bind(on_activity_result=self._on_activity_result)
+            self._bound = True
+            activity.startActivityForResult(intent, CameraCapture.REQ)
+            _cam_log("kamera intent başlatıldı")
+        except Exception as e:
+            self._cleanup_media()
+            return self.finish_with_error("Kamera başlatılamadı: %s" % e)
+
+    def _plyer_done(self, filepath):
+        Clock.schedule_once(lambda dt: self.collect(), 0.6)
+        return False
+
+    def _on_activity_result(self, request_code, result_code, intent):
+        if request_code != CameraCapture.REQ:
+            return
+        try:
+            from android import activity as android_activity
+            android_activity.unbind(on_activity_result=self._on_activity_result)
+        except Exception:
+            pass
+        self._bound = False
+        self._result_code = result_code
+        self._result_intent = intent
+        # Bazı kamera uygulamaları sonucu döndürdükten SONRA diske yazar:
+        # kısa bir gecikmeyle ve boyut/kodlama kontrolüyle doğrularız.
+        Clock.schedule_once(lambda dt: self.collect(), 0.5)
+
+    # --------------------------------------------------------------- topla/bitir
+    def collect(self):
+        if self._done:
+            return
+        try:
+            self._collect_inner()
+        except Exception as e:
+            _cam_log("collect hatası: %s" % e)
+            self._cleanup_media()
+            self.finish_with_error("Fotoğraf işlenirken hata: %s" % e)
+
+    def _collect_inner(self):
+        src = self._locate_captured()
+        if src:
+            if not verify_image(src):
+                # dosya henüz yarım olabilir: birkaç kez dene
+                self._attempts += 1
+                if self._attempts <= 6:
+                    Clock.schedule_once(lambda dt: self.collect(), 0.4)
+                    return
+                self._cleanup_media()
+                return self.finish_with_error(
+                    "Fotoğraf okunamadı (dosya bozuk veya erişilemiyor). "
+                    "Tekrar deneyin.")
+            return self._apply(src)
+
+        if getattr(self, "_result_code", None) == CameraCapture.RESULT_CANCELED:
+            self._cleanup_media()
+            return self.finish_with_error("")  # kullanıcı vazgeçti: sessiz kapat
+
+        self._attempts += 1
+        if self._attempts <= 6:
+            Clock.schedule_once(lambda dt: self.collect(), 0.4)
+            return
+        self._cleanup_media()
+        self.finish_with_error(
+            "Fotoğraf bulunamadı. Telefonunuzun kamera uygulaması dosyayı "
+            "uygulamanın klasörüne yazamıyor olabilir.")
+
+    def _locate_captured(self):
+        """Çekilen dosyayı bul: MediaStore -> kendi dosyamız -> intent'ten dönen URI."""
+        # a) MediaStore girdisi
+        if self.ms_path and verify_image(self.ms_path):
+            return self.ms_path
+        if self.ms_uri is not None:
+            self.ms_path = self.ms_path or _uri_real_path(self.ms_uri)
+            if self.ms_path and verify_image(self.ms_path):
+                return self.ms_path
+            # içeriği kendimiz kopyalayalım
+            if self.dest and _copy_uri_to_file(self.ms_uri, self.dest) and verify_image(self.dest):
+                return self.dest
+        # b) doğrudan dosyamıza yazılmış mı
+        if self.dest:
+            try:
+                if os.path.isfile(self.dest) and os.path.getsize(self.dest) > 0 \
+                        and verify_image(self.dest):
+                    return self.dest
+            except Exception as e:
+                _cam_log("dest kontrol edilemedi: %s" % e)
+        # c) kamera kendi galerisine yazdıysa: intent'ten dönen URI
+        intent = self._result_intent
+        if intent is not None:
+            try:
+                data = intent.getData()
+                if data is not None:
+                    p = data.getPath()
+                    if p and verify_image(p):
+                        return p
+                    if self.dest and _copy_uri_to_file(data, self.dest) and verify_image(self.dest):
+                        return self.dest
+            except Exception as e:
+                _cam_log("intent data okunamadı: %s" % e)
+            try:
+                extras = intent.getExtras()
+                bitmap = extras.get('data') if extras is not None else None
+                if bitmap is not None and self.dest:
+                    # bazı kısıtlı kamera uygulamaları sadece küçük önizleme
+                    # (thumbnail) döndürür; hiçbir şey olmamasından iyidir
+                    from jnius import autoclass
+                    fos = autoclass('java.io.FileOutputStream')(self.dest)
+                    fmt = autoclass('android.graphics.Bitmap$CompressFormat').JPEG
+                    bitmap.compress(fmt, 88, fos)
+                    fos.close()
+                    if verify_image(self.dest):
+                        _cam_log("thumbnail kaydedildi")
+                        return self.dest
+            except Exception as e:
+                _cam_log("extra thumbnail: %s" % e)
+        return ""
+
+    def _apply(self, src):
+        final = src
+        try:
+            if self.dest and os.path.abspath(src) != os.path.abspath(self.dest):
+                shutil.copyfile(src, self.dest)
+                final = self.dest
+        except Exception as e:
+            _cam_log("kopyalama başarısız (%s), kaynak kullanılıyor" % e)
+            final = src if verify_image(src) else ""
+        if not final or not verify_image(final):
+            self._cleanup_media()
+            return self.finish_with_error("Fotoğraf kaydedilemedi (dosya okunamıyor).")
+        try:
+            fixed = fix_image_orientation(final)
+            if fixed and verify_image(fixed):
+                final = fixed
+        except Exception as e:
+            _cam_log("orientation: %s" % e)
+        self._cleanup_media()
+        self.finish_ok(final)
+
+    def _cleanup_media(self):
+        """Geçici MediaStore kaydını ve boş dosyaları temizle."""
+        if self.ms_uri is not None:
+            try:
+                _android_activity().getContentResolver().delete(self.ms_uri)
+            except Exception:
+                pass
+            self.ms_uri = None
+        if self.ms_path:
+            try:
+                if os.path.exists(self.ms_path):
+                    os.remove(self.ms_path)
+            except Exception:
+                pass
+            self.ms_path = ""
+        # 0 baytlık yetim dosya bırakma (yoksa UI'da beyaz kare görünür)
+        if self.dest:
+            try:
+                if os.path.exists(self.dest) and os.path.getsize(self.dest) == 0:
+                    os.remove(self.dest)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------ bitiş
+    def finish_ok(self, path):
+        self._finish(path, "")
+
+    def finish_with_error(self, msg):
+        self._finish("", msg)
+
+    def _finish(self, path, msg):
+        if self._done:
+            return
+        self._done = True
+        if self._bound:
+            try:
+                from android import activity as android_activity
+                android_activity.unbind(on_activity_result=self._on_activity_result)
+            except Exception:
+                pass
+            self._bound = False
+        if CameraCapture._active is self:
+            CameraCapture._active = None
+        try:
+            self.on_done(path or "", msg or "")
+        except Exception as e:
+            _cam_log("on_done: %s" % e)
+
 
 def load_settings():
     try:
@@ -844,6 +1556,68 @@ class TopBar(BoxLayout):
 
     def _update_color(self, *a):
         self._color.rgba = self.bar_color
+
+class SafeImage(FloatLayout):
+    """Dosya okunamadığında boş/beyaz kutu yerine neden yazan fotoğraf alanı.
+
+    Kivy'nin Image widget'ı kaynak yüklenemezse hiçbir şey çizmez; beyaz
+    zeminli kartta bu 'beyaz kare' olarak görünüyordu. Burada dosya önce
+    doğrulanır, olmazsa kullanıcı ne olduğunu okur.
+    """
+    source = StringProperty("")
+    no_photo_text = StringProperty("")
+
+    def __init__(self, **kw):
+        src = kw.pop("source", "")
+        self.no_photo_text = kw.pop("no_photo_text", "fotoğraf yok")
+        allow_stretch = kw.pop("allow_stretch", True)
+        keep_ratio = kw.pop("keep_ratio", True)
+        self._refreshing = False
+        super().__init__(**kw)
+        self.img = Image(source="", allow_stretch=allow_stretch, keep_ratio=keep_ratio,
+                         size_hint=(1, 1), opacity=0)
+        self.lbl = Label(text="", font_size=fs(11), halign="center", valign="middle",
+                         size_hint=(1, 1), color=(0.55, 0.55, 0.55, 1))
+        self.lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
+        self.add_widget(self.img)
+        self.add_widget(self.lbl)
+        self.source = src
+        self.bind(source=lambda w, v: self._refresh())
+        self.bind(size=lambda w, *a: self._refresh())
+
+    def set_source(self, path):
+        """Aynı dosya adına bile olsa yeniden kontrol eder."""
+        if path == self.source:
+            self._refresh()
+        else:
+            self.source = path
+
+    def _refresh(self, *a):
+        if self._refreshing:
+            return
+        self._refreshing = True
+        try:
+            path = self.source or ""
+            if path and verify_image(path):
+                if self.img.source != path:
+                    self.img.source = path
+                else:
+                    try:
+                        self.img.reload()
+                    except Exception:
+                        pass
+                self.img.opacity = 1
+                self.lbl.text = ""
+            else:
+                self.img.opacity = 0
+                self.img.source = ""
+                self.lbl.text = (self.no_photo_text if path else "")
+        except Exception:
+            self.img.opacity = 0
+            self.lbl.text = ""
+        finally:
+            self._refreshing = False
+
 
 class IconBtn(Button):
     def __init__(self, **kw):
@@ -1785,12 +2559,24 @@ class EvimApp(App):
         box.add_widget(t_lbl)
 
         if item_photo:
-            full_path = os.path.join(get_photo_dir(), item_photo)
-            if os.path.exists(full_path):
+            # Sadece GERÇEKTEN okunup çözümlenebilen dosyayı göster; aksi halde
+            # kartta boş (beyaz) bir kutu kalıyordu.
+            full_path = pick_display_photo(item_photo, "")
+            if full_path:
                 img_box = BoxLayout(size_hint_y=None, height=dph(180), padding=(0, dp(8)))
-                img = Image(source=full_path, allow_stretch=True, keep_ratio=True)
+                img = SafeImage(source=full_path, allow_stretch=True, keep_ratio=True,
+                                no_photo_text="Fotoğraf gösterilemiyor\n(dosya okunamıyor)")
                 img_box.add_widget(img)
                 box.add_widget(img_box)
+            elif os.path.basename(str(item_photo)):
+                miss_box = BoxLayout(size_hint_y=None, height=dph(56), padding=(0, dp(8)))
+                miss_lbl = Label(text="Fotoğraf dosyası bulunamadı\n(dosya silinmiş ya da "
+                                      "taşınmış olabilir)", font_size=fs(11), halign="center",
+                                 valign="middle", color=hex_rgba(th["text_secondary"]),
+                                 markup=False, size_hint=(1, 1))
+                miss_lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
+                miss_box.add_widget(miss_lbl)
+                box.add_widget(miss_box)
 
         lbl_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text_secondary"])[:3])
         val_hex = "".join(f"{int(c*255):02X}" for c in hex_rgba(th["text"])[:3])
@@ -2360,69 +3146,44 @@ class EvimApp(App):
 
         # FOTOĞRAF SEÇİM ALANI
         photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(8))
-        photo_preview = Image(size_hint_x=None, width=dph(50), allow_stretch=True, keep_ratio=True)
-        
+        photo_slot = SafeImage(size_hint_x=None, width=dph(50),
+                              no_photo_text="fotoğraf\nokunamıyor")
+
         photo_state = {"current_file": "", "existing_file": ""}
-        
+
         def update_photo_preview():
-            path_to_show = ""
-            if photo_state["current_file"]:
-                path_to_show = photo_state["current_file"]
-            elif photo_state["existing_file"]:
-                full_path = os.path.join(get_photo_dir(), photo_state["existing_file"])
-                if os.path.exists(full_path):
-                    path_to_show = full_path
-            
-            if path_to_show:
-                photo_preview.source = path_to_show
-                photo_preview.opacity = 1
-                photo_preview.reload()
-            else:
-                photo_preview.source = ""
-                photo_preview.opacity = 0
-                
+            path_to_show = pick_display_photo(photo_state["current_file"],
+                                              photo_state["existing_file"])
+            photo_slot.no_photo_text = ("fotoğraf\nokunamıyor"
+                                        if (photo_state["current_file"] or
+                                            photo_state["existing_file"]) else "")
+            photo_slot.set_source(path_to_show)
+
         def on_photo_picked(path):
-            if not path: return
-            p_dir = get_photo_dir()
-            
-            dest = os.path.join(p_dir, f"photo_{uuid.uuid4().hex[:8]}.jpg")
-            try:
-                if path != dest:
-                    shutil.copy(path, dest)
-                fix_image_orientation(dest)
-                photo_state["current_file"] = dest
-            except Exception:
-                photo_state["current_file"] = path
-            
+            if not path:
+                return
+            final, stored = store_photo(path)
+            if not final:
+                self._show_message(
+                    "Uyarı",
+                    "Seçilen fotoğraf kopyalanamadı ya da okunamıyor:\n%s" % path)
+                return
+            photo_state["current_file"] = final
             update_photo_preview()
 
         def take_camera_photo(*a):
-            if camera is None:
-                self._show_message("Hata", "Kamera modülü yüklenemedi. Lütfen baştan derleyin.")
-                return
-
-            temp_dir = get_photo_dir()
-            dest_filename = os.path.join(temp_dir, f"photo_{uuid.uuid4().hex[:8]}.jpg")
-            
-            def _on_complete(filepath):
-                def check_and_apply(dt):
-                    path_to_check = filepath if (filepath and os.path.exists(filepath)) else dest_filename
-                    if os.path.exists(path_to_check) and os.path.getsize(path_to_check) > 0:
-                        try:
-                            fix_image_orientation(path_to_check)
-                        except:
-                            pass
-                        photo_state["current_file"] = path_to_check
-                        update_photo_preview()
-                    else:
-                        self._show_message("Uyarı", "Fotoğraf alınamadı. Lütfen tekrar deneyin.")
-                
-                Clock.schedule_once(check_and_apply, 1.0)
+            def _cam_done(filepath, err):
+                if not filepath:
+                    if err:
+                        self._show_message("Kamera", err)
+                    return
+                photo_state["current_file"] = filepath
+                update_photo_preview()
 
             try:
-                camera.take_picture(filename=dest_filename, on_complete=_on_complete)
+                CameraCapture.run(_cam_done)
             except Exception as e:
-                self._show_message("Hata", f"Kamera açılamadı: {e}")
+                self._show_message("Hata", "Kamera açılamadı: %s" % e)
 
         btn_box = BoxLayout(spacing=dp(6))
         gal_btn = Button(text="Galeri", background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(12))
@@ -2441,7 +3202,7 @@ class EvimApp(App):
             update_photo_preview()
         clear_photo_btn.bind(on_release=clear_photo)
 
-        photo_row.add_widget(photo_preview)
+        photo_row.add_widget(photo_slot)
         photo_row.add_widget(btn_box)
         photo_row.add_widget(clear_photo_btn)
         box.add_widget(photo_row)
@@ -2521,11 +3282,34 @@ class EvimApp(App):
             qm_val = qty_min_field.text.strip()
             m_val = move_field.text.strip()
             
+            # --- fotoğraf: okunabilir olanı kaydet, kalıcı klasöre taşı ---
             final_photo = photo_state["existing_file"]
-            if photo_state["current_file"]:
-                final_photo = os.path.basename(photo_state["current_file"])
-            elif not photo_state["existing_file"] and not photo_state["current_file"]:
-                final_photo = ""
+            cur = photo_state["current_file"]
+            if cur:
+                if not verify_image(cur):
+                    cur = resolve_photo_path(cur)
+                if cur and verify_image(cur):
+                    try:
+                        in_photo_dir = (os.path.dirname(os.path.abspath(cur))
+                                        == os.path.abspath(get_photo_dir()))
+                    except Exception:
+                        in_photo_dir = False
+                    if in_photo_dir:
+                        final_photo = photo_stored_value(cur)
+                    else:
+                        moved, moved_stored = store_photo(cur)
+                        if moved:
+                            cur = moved
+                            photo_state["current_file"] = moved
+                            final_photo = moved_stored or photo_stored_value(moved)
+                else:
+                    # Dosya okunamıyor -> fotoğrafsız kaydet (beyaz kare kalmasın)
+                    self._show_message(
+                        "Uyarı",
+                        "Seçilen fotoğraf dosyası okunamadığı için fotoğrafsız "
+                        "kaydedildi.")
+                    photo_state["current_file"] = ""
+                    final_photo = photo_state["existing_file"]
             
             kw = dict(
                 price=float(p_val) if p_val else 0,
