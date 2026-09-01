@@ -692,9 +692,35 @@ class CameraCapture:
             pass
         self._bound = False
         self._result_code = result_code
-        self._result_intent = intent
-        # Bazı kamera uygulamaları sonucu döndürdükten SONRA diske yazar:
-        # kısa bir gecikmeyle ve boyut/kodlama kontrolüyle doğrularız.
+        
+        # Kamera uygulamasından dönen Intent, asenkron işlemler tamamlanmadan Android çöp toplayıcısı
+        # tarafından temizlenebilir. Çökmeyi önlemek için Intent referansını saklamak yerine
+        # gereken verileri hemen ayıklıyoruz.
+        self._intent_uri_str = ""
+        self._has_thumbnail = False
+        
+        if intent is not None:
+            try:
+                data = intent.getData()
+                if data is not None:
+                    self._intent_uri_str = data.toString()
+            except Exception:
+                pass
+            
+            try:
+                extras = intent.getExtras()
+                if extras is not None:
+                    bitmap = extras.get('data')
+                    if bitmap is not None and self.dest:
+                        from jnius import autoclass
+                        fos = autoclass('java.io.FileOutputStream')(self.dest)
+                        fmt = autoclass('android.graphics.Bitmap$CompressFormat').JPEG
+                        bitmap.compress(fmt, 88, fos)
+                        fos.close()
+                        self._has_thumbnail = True
+            except Exception:
+                pass
+
         Clock.schedule_once(lambda dt: self.collect(), 0.5)
 
     # --------------------------------------------------------------- topla/bitir
@@ -738,53 +764,35 @@ class CameraCapture:
 
     def _locate_captured(self):
         """Çekilen dosyayı bul: MediaStore -> kendi dosyamız -> intent'ten dönen URI."""
-        # a) MediaStore girdisi
         if self.ms_path and verify_image(self.ms_path):
             return self.ms_path
         if self.ms_uri is not None:
             self.ms_path = self.ms_path or _uri_real_path(self.ms_uri)
             if self.ms_path and verify_image(self.ms_path):
                 return self.ms_path
-            # içeriği kendimiz kopyalayalım
             if self.dest and _copy_uri_to_file(self.ms_uri, self.dest) and verify_image(self.dest):
                 return self.dest
-        # b) doğrudan dosyamıza yazılmış mı
+        
         if self.dest:
             try:
-                if os.path.isfile(self.dest) and os.path.getsize(self.dest) > 0 \
-                        and verify_image(self.dest):
+                if os.path.isfile(self.dest) and os.path.getsize(self.dest) > 0 and verify_image(self.dest):
                     return self.dest
-            except Exception as e:
-                _cam_log("dest kontrol edilemedi: %s" % e)
-        # c) kamera kendi galerisine yazdıysa: intent'ten dönen URI
-        intent = self._result_intent
-        if intent is not None:
+            except Exception:
+                pass
+        
+        if getattr(self, "_intent_uri_str", ""):
             try:
-                data = intent.getData()
-                if data is not None:
-                    p = data.getPath()
-                    if p and verify_image(p):
-                        return p
-                    if self.dest and _copy_uri_to_file(data, self.dest) and verify_image(self.dest):
-                        return self.dest
-            except Exception as e:
-                _cam_log("intent data okunamadı: %s" % e)
-            try:
-                extras = intent.getExtras()
-                bitmap = extras.get('data') if extras is not None else None
-                if bitmap is not None and self.dest:
-                    # bazı kısıtlı kamera uygulamaları sadece küçük önizleme
-                    # (thumbnail) döndürür; hiçbir şey olmamasından iyidir
-                    from jnius import autoclass
-                    fos = autoclass('java.io.FileOutputStream')(self.dest)
-                    fmt = autoclass('android.graphics.Bitmap$CompressFormat').JPEG
-                    bitmap.compress(fmt, 88, fos)
-                    fos.close()
-                    if verify_image(self.dest):
-                        _cam_log("thumbnail kaydedildi")
-                        return self.dest
-            except Exception as e:
-                _cam_log("extra thumbnail: %s" % e)
+                from jnius import autoclass
+                Uri = autoclass('android.net.Uri')
+                uri = Uri.parse(self._intent_uri_str)
+                if self.dest and _copy_uri_to_file(uri, self.dest) and verify_image(self.dest):
+                    return self.dest
+            except Exception:
+                pass
+        
+        if getattr(self, "_has_thumbnail", False) and self.dest and verify_image(self.dest):
+            return self.dest
+
         return ""
 
     def _apply(self, src):
@@ -1557,12 +1565,13 @@ class TopBar(BoxLayout):
     def _update_color(self, *a):
         self._color.rgba = self.bar_color
 
-class SafeImage(FloatLayout):
+class SafeImage(RelativeLayout):
     """Dosya okunamadığında boş/beyaz kutu yerine neden yazan fotoğraf alanı.
 
     Kivy'nin Image widget'ı kaynak yüklenemezse hiçbir şey çizmez; beyaz
     zeminli kartta bu 'beyaz kare' olarak görünüyordu. Burada dosya önce
     doğrulanır, olmazsa kullanıcı ne olduğunu okur.
+    RelativeLayout kullanıldığı için FloatLayout'un x=0, y=0'a kayma bug'ı çözülmüştür.
     """
     source = StringProperty("")
     no_photo_text = StringProperty("")
@@ -1912,7 +1921,7 @@ class EvimApp(App):
         lbl = Label(text=title, bold=True, font_size=fs(15), color=(1, 1, 1, 1), halign="left", valign="middle", shorten=True, size_hint_y=1)
         lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
         bar.add_widget(lbl)
-        if getattr(self, 'multi_select_mode', False) and self.sm.current == "room":
+        if getattr(self, 'multi_select_mode', False) and bool(self.nav_stack):
             sel_btn = Button(text="Vazgeç", size_hint=(None, None), size=(dph(60), bar_h), background_normal="", background_color=(0,0,0,0), color=(1,1,1,1), font_size=fs(11), bold=True)
             sel_btn.bind(on_release=lambda *a: self.toggle_multi_select())
             bar.add_widget(sel_btn)
@@ -2313,7 +2322,10 @@ class EvimApp(App):
     def toggle_multi_select(self):
         self.multi_select_mode = not self.multi_select_mode
         self.selected_items = set()
-        Clock.schedule_once(lambda dt: self._render_room(), 0.05)
+        if self.nav_stack:
+            Clock.schedule_once(lambda dt: self._render_room(), 0.05)
+        else:
+            Clock.schedule_once(lambda dt: self.refresh_home(), 0.05)
 
     def do_batch_move(self):
         if not self.selected_items: return
@@ -2647,6 +2659,10 @@ class EvimApp(App):
             return
         self._is_going_back = True
         Clock.schedule_once(lambda dt: setattr(self, '_is_going_back', False), 0.35)
+        
+        self.multi_select_mode = False
+        self.selected_items = set()
+        
         try:
             if self.sm.current == "info":
                 self.sm.transition = SlideTransition(direction="right")
