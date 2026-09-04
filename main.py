@@ -677,11 +677,10 @@ class CameraCapture:
         self._bound = False
         self._result_code = result_code
         
-        # Kamera uygulamasından dönen Intent, asenkron işlemler tamamlanmadan Android çöp toplayıcısı
-        # tarafından temizlenebilir. Çökmeyi önlemek için Intent referansını saklamak yerine
-        # gereken verileri hemen ayıklıyoruz.
+        # Orijinal dosyaya zarar veren ve uygulamanın çökmesine yol açan sorunlu 
+        # önizleme (thumbnail) ayıklama/üzerine yazma kodu tamamen KALDIRILDI.
+        # Kamera zaten hedef (EXTRA_OUTPUT) konumuna güvenle ve tam çözünürlüklü olarak yazar.
         self._intent_uri_str = ""
-        self._has_thumbnail = False
         
         if intent is not None:
             try:
@@ -690,21 +689,7 @@ class CameraCapture:
                     self._intent_uri_str = data.toString()
             except Exception:
                 pass
-            
-            try:
-                extras = intent.getExtras()
-                if extras is not None:
-                    bitmap = extras.get('data')
-                    if bitmap is not None and self.dest:
-                        from jnius import autoclass
-                        fos = autoclass('java.io.FileOutputStream')(self.dest)
-                        fmt = autoclass('android.graphics.Bitmap$CompressFormat').JPEG
-                        bitmap.compress(fmt, 88, fos)
-                        fos.close()
-                        self._has_thumbnail = True
-            except Exception:
-                pass
-
+                
         Clock.schedule_once(lambda dt: self.collect(), 0.5)
 
     # --------------------------------------------------------------- topla/bitir
@@ -773,9 +758,6 @@ class CameraCapture:
                     return self.dest
             except Exception:
                 pass
-        
-        if getattr(self, "_has_thumbnail", False) and self.dest and verify_image(self.dest):
-            return self.dest
 
         return ""
 
