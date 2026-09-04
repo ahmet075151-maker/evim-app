@@ -112,6 +112,8 @@ def _dir_usable(path):
 
 
 def _add_nomedia(path):
+    """Klasör içine .nomedia dosyası ekler. Bu sayede fotoğraflar galeride gözükmez 
+    fakat uygulamamız dosyaları tam yoldan okuduğu için program içinde sorunsuz görünür."""
     try:
         nomedia_path = os.path.join(path, ".nomedia")
         if not os.path.exists(nomedia_path):
@@ -124,6 +126,8 @@ def _add_nomedia(path):
 def get_photo_dir():
     """Uygulamanın fotoğrafları sakladığı klasör (yaz+oku testinden geçmiş)."""
     if _photo_dir_cache["dir"]:
+        # Kullanıcı galeride görünsün diye silmiş veya yanlışlıkla silinmişse her ihtimale karşı yeniden ekle
+        _add_nomedia(_photo_dir_cache["dir"])
         return _photo_dir_cache["dir"]
 
     private_dir = os.path.join(get_internal_dir(), "Fotograflar")
@@ -164,7 +168,8 @@ def resolve_photo_path(stored):
     """DB'deki değeri (basename veya tam yol) gerçek okunabilir yola çevirir.
 
     Bulunamazsa "" döner — böylece ekranda boş/beyaz kare yerine 'fotoğraf yok'
-    yazabiliriz.
+    yazabiliriz. Uygulama .nomedia olsa bile doğrudan dosya yoluna eriştiği için
+    dosyayı bulup gösterecektir.
     """
     if not stored:
         return ""
@@ -243,12 +248,7 @@ def new_photo_name():
 
 
 def pick_display_photo(current_file="", existing_file=""):
-    """Ekranda gösterilecek fotoğrafın yolunu seçer.
-
-    ÖNEMLİ: eski kod yalnızca 'dosya var mı' diye bakıyordu; dosya var ama
-    okunamıyor ya da yarım yazılmışsa ortada boş (beyaz) bir kare kalıyordu.
-    Burada dosyanın gerçekten çözümlenebilmesi şart.
-    """
+    """Ekranda gösterilecek fotoğrafın yolunu seçer."""
     path = ""
     if current_file:
         path = current_file if verify_image(current_file) else resolve_photo_path(current_file)
@@ -275,13 +275,7 @@ def get_download_path():
     return base
 
 def fix_image_orientation(image_path):
-    """Fotoğrafı EXIF'e göre doğrultur, küçültür ve geri yazılır.
-
-    ÖNEMLİ: eski kod dosyayı OKURKEN aynı dosyanın üzerine yazıyordu; kamera
-    çıktısı gibi büyük JPEG'lerde bu, yarım/bozuk (ekranda beyaz kare görünen)
-    dosyalar üretiyordu. Artık önce tamamen belleğe alınıp geçici dosyaya
-    yazılıyor, sonra atomik olarak yerine konuyor.
-    """
+    """Fotoğrafı EXIF'e göre doğrultur, küçültür ve geri yazılır."""
     if not image_path or not os.path.exists(image_path):
         return image_path
     if PILImage is None:
@@ -538,17 +532,7 @@ def _touch_own_file(path):
 
 
 class CameraCapture:
-    """Sistem kamerasıyla fotoğraf çekme (plyer'daki file:// sorununu giderir).
-
-    plyer kamera uygulamasına 'file://.../photo_x.jpg' verir; Android 11+'ta
-    kamera uygulamasının oluşturduğu bu dosyayı kendi uygulamamız OKUYAMAZ
-    (scoped storage) ve Kivy boş/beyaz bir kare gösterir. Burada:
-
-      1) hedef dosyayı önce biz oluştururuz (dosya bizde kalır), VEYA
-      2) API 29+'ta kendi MediaStore girdimizi oluşturup kameraya content:// URI
-         veririz (izin grant'ı ile), sonra içeriği kendi klasörümüze kopyalarız,
-      3) fotoğrafı doğrularız (okunamıyorsa beyaz kare yerine net uyarı).
-    """
+    """Sistem kamerasıyla fotoğraf çekme (plyer'daki file:// sorununu giderir)."""
     REQ = 0x2E1
     RESULT_OK = -1
     RESULT_CANCELED = 0
