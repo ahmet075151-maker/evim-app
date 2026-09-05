@@ -85,8 +85,9 @@ def global_exception_handler(exctype, value, tb):
         return
     try:
         log_dir = get_download_path()
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        if not os.path.exists(log_dir) or not os.access(log_dir, os.W_OK):
+            log_dir = get_internal_dir() # Download erişimi yoksa iç klasöre yaz
+        
         log_file = os.path.join(log_dir, "evim_hata_raporu.txt")
         with open(log_file, "a", encoding="utf-8") as f:
             f.write("\n" + "="*50 + "\n")
@@ -187,7 +188,7 @@ def all_photo_dirs():
 
 
 def resolve_photo_path(stored):
-    """DB'deki değeri okunabilir yola çevirir. .nomedia olsa bile doğrudan dosyayı bulur."""
+    """DB'deki değeri okunabilir yola çevirir."""
     if not stored:
         return ""
     p = str(stored).strip()
@@ -226,43 +227,71 @@ def photo_stored_value(full_path):
     return full_path
 
 
-def verify_image(path):
-    """Dosya okunaklı mı kontrol eder. HEIC dahil tüm standart formatlara izin verir."""
-    if not path:
-        return False
+def is_heic(path):
+    """Dosyanın Apple HEIC formatında olup olmadığını kontrol eder."""
+    if not path: return False
+    if path.lower().endswith(('.heic', '.heif')): return True
     try:
-        if not os.path.isfile(path) or os.path.getsize(path) < 100:
-            return False
-        if not os.access(path, os.R_OK):
-            return False
+        with open(path, 'rb') as f:
+            head = f.read(12)
+        if head[4:8] == b"ftyp" and head[8:12] in [b"heic", b"heix", b"mif1", b"msf1"]:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def convert_heic_to_jpg_native(src_path, dest_path):
+    """Android'in yerel Bitmap kütüphanesiyle HEIC -> JPG dönüşümü yapar.
+    Kivy'nin HEIC dosyalarını desteklememesi sorununu çözer."""
+    if platform != "android": return False
+    try:
+        from jnius import autoclass
+        BitmapFactory = autoclass('android.graphics.BitmapFactory')
+        Bitmap = autoclass('android.graphics.Bitmap')
+        FileOutputStream = autoclass('java.io.FileOutputStream')
+        
+        bitmap = BitmapFactory.decodeFile(src_path)
+        if bitmap is None: return False
+        
+        out = FileOutputStream(dest_path)
+        success = bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        out.flush()
+        out.close()
+        return success
+    except Exception:
+        return False
+
+
+def verify_image(path):
+    """Dosya okunaklı ve Kivy tarafından desteklenen bir resim mi kontrol eder."""
+    if not path: return False
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) < 100: return False
+        if not os.access(path, os.R_OK): return False
     except Exception:
         return False
         
-    # Önce dosyanın raw başlığına (signature) bakıyoruz.
-    # HEIC/HEIF dosyaları PIL olmadan desteklenemeyebilir ama geçerli dosyadır.
-    try:
-        with open(path, "rb") as f:
-            head = f.read(16)
-        # HEIC başlıkları ftypheic, ftypmif1, ftypheix vs. içerir.
-        if head[4:8] == b"ftyp" and head[8:12] in [b"heic", b"heix", b"mif1", b"msf1"]:
+    # Kivy HEIC gösteremediği için doğrulamadan geçirme (beyaz kare olmasını engelle)
+    # Zaten dönüştürücü onu .jpg yapıp öyle saklayacak.
+    if is_heic(path): return False
+
+    if PILImage is not None:
+        try:
+            with PILImage.open(path) as im:
+                im.load()
+                if im.width < 8 or im.height < 8: return False
             return True
+        except Exception:
+            pass
+            
+    try:
+        with open(path, "rb") as f: head = f.read(16)
         if head[:3] == b"\xff\xd8\xff": return True # JPEG
         if head[:8] == b"\x89PNG\r\n\x1a\n": return True # PNG
         if head[:4] == b"RIFF" and head[8:12] == b"WEBP": return True # WEBP
     except Exception:
         pass
-
-    # PIL ile son bir deneme
-    if PILImage is not None:
-        try:
-            with PILImage.open(path) as im:
-                im.load()
-                if im.width < 8 or im.height < 8:
-                    return False
-            return True
-        except Exception:
-            pass
-            
     return False
 
 
@@ -343,31 +372,28 @@ def fix_image_orientation(image_path):
 
 
 def store_photo(src_path):
+    """Seçilen fotoğrafı alır, HEIC ise JPG'ye çevirir, klasöre depolar."""
     if not src_path or not os.path.exists(src_path):
         return "", ""
     p_dir = get_photo_dir()
-    try:
-        dest = os.path.join(p_dir, new_photo_name())
-    except Exception:
-        dest = ""
+    dest = os.path.join(p_dir, new_photo_name())
 
     final = ""
-    if dest:
-        try:
-            try:
-                if os.path.dirname(os.path.abspath(src_path)) == os.path.abspath(p_dir):
-                    dest = src_path
-            except Exception:
-                pass
+    try:
+        if is_heic(src_path) and platform == "android":
+            if convert_heic_to_jpg_native(src_path, dest):
+                final = fix_image_orientation(dest)
+        else:
             if os.path.abspath(src_path) != os.path.abspath(dest):
                 shutil.copyfile(src_path, dest)
             final = fix_image_orientation(dest)
-        except Exception:
-            final = ""
-        if final and not verify_image(final):
-            try: os.remove(final)
-            except: pass
-            final = ""
+    except Exception:
+        final = ""
+        
+    if final and not verify_image(final):
+        try: os.remove(final)
+        except: pass
+        final = ""
 
     if not final and verify_image(src_path):
         final = src_path
@@ -452,40 +478,26 @@ def _uri_real_path(uri):
 
 def _copy_uri_to_file(uri, dest_path):
     """
-    Kamera uygulamasının ContentProvider'a yazdığı veriyi kendi klasörümüze kopyalarken
-    PyJNIus'un çökmesine neden olan bayt-okuma döngüsü yerine doğrudan Java'nın
-    yerel kopyalama sınıflarını kullanır (Sıfır byte ve çökme sorununu kökten çözer).
+    JNI çökmesini tamamen engelleyen saf Byte kopyalama fonksiyonu.
     """
     try:
         from jnius import autoclass
         activity = _android_activity()
         ins = activity.getContentResolver().openInputStream(uri)
-        if ins is None:
-            return False
-            
+        if ins is None: return False
+        
         fos = autoclass('java.io.FileOutputStream')(dest_path)
-        ok = False
-        try:
-            if android_api_level() >= 29:
-                FileUtils = autoclass('android.os.FileUtils')
-                FileUtils.copy(ins, fos)
-                ok = True
-            else:
-                Channels = autoclass('java.nio.channels.Channels')
-                src_channel = Channels.newChannel(ins)
-                dest_channel = fos.getChannel()
-                dest_channel.transferFrom(src_channel, 0, 9223372036854775807)
-                ok = True
-        except Exception as e:
-            _cam_log("copy exception: %s" % e)
-        finally:
-            try: fos.close()
-            except: pass
-            try: ins.close()
-            except: pass
+        # Saf Byte Array - JNI çökmesini aşmanın en stabil yolu
+        buf = autoclass('[B')(8192) 
+        
+        while True:
+            n = ins.read(buf)
+            if n == -1: break
+            fos.write(buf, 0, n)
             
-        # Sadece kopyalama sorunsuz bittiyse ve dosya içi doluysa başarılı say
-        return bool(ok) and os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
+        fos.close()
+        ins.close()
+        return os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
     except Exception as e:
         _cam_log("_copy_uri_to_file fatal crash avoided: %s" % e)
         return False
@@ -515,7 +527,6 @@ class CameraCapture:
         self._bound = False
         self._done = False
         self._attempts = 0
-        self._result_intent = None
         self._result_code = None
         self._started_at = 0.0
 
@@ -622,32 +633,26 @@ class CameraCapture:
 
     def _on_activity_result(self, request_code, result_code, intent):
         try:
-            if request_code != CameraCapture.REQ:
-                return
+            if request_code != CameraCapture.REQ: return
+            
+            # intent objesine dokunmuyoruz. Ana çökme sebebi intent'i bu thread'de okumaktı.
+            self._result_code = result_code
+            Clock.schedule_once(lambda dt: self.collect(), 0.5)
+        except Exception:
+            pass
+
+    def collect(self):
+        if self._done:
+            return
+            
+        if self._bound:
             try:
                 from android import activity as android_activity
                 android_activity.unbind(on_activity_result=self._on_activity_result)
             except Exception:
                 pass
             self._bound = False
-            self._result_code = result_code
-            self._intent_uri_str = ""
             
-            if intent:
-                try:
-                    data = intent.getData()
-                    if data:
-                        self._intent_uri_str = data.toString()
-                except Exception:
-                    pass
-                    
-            Clock.schedule_once(lambda dt: self.collect(), 0.5)
-        except Exception as e:
-            _cam_log("CRASH prevented in _on_activity_result: " + str(e))
-
-    def collect(self):
-        if self._done:
-            return
         try:
             self._collect_inner()
         except Exception as e:
@@ -697,17 +702,6 @@ class CameraCapture:
                     return self.dest
             except Exception:
                 pass
-        
-        if getattr(self, "_intent_uri_str", ""):
-            try:
-                from jnius import autoclass
-                Uri = autoclass('android.net.Uri')
-                uri = Uri.parse(self._intent_uri_str)
-                if self.dest and _copy_uri_to_file(uri, self.dest) and verify_image(self.dest):
-                    return self.dest
-            except Exception:
-                pass
-
         return ""
 
     def _apply(self, src):
@@ -734,7 +728,6 @@ class CameraCapture:
     def _cleanup_media(self):
         if self.ms_uri is not None:
             try:
-                # Java API'sine 3 argüman da verilerek olası çökme engellendi
                 _android_activity().getContentResolver().delete(self.ms_uri, None, None)
             except Exception:
                 pass
@@ -3199,9 +3192,9 @@ class EvimApp(App):
             final_photo = photo_state["existing_file"]
             cur = photo_state["current_file"]
             if cur:
-                if not verify_image(cur):
+                if not verify_image(cur) and not is_heic(cur):
                     cur = resolve_photo_path(cur)
-                if cur and verify_image(cur):
+                if cur and (verify_image(cur) or is_heic(cur)):
                     try:
                         in_photo_dir = (os.path.dirname(os.path.abspath(cur))
                                         == os.path.abspath(get_photo_dir()))
