@@ -188,7 +188,7 @@ def all_photo_dirs():
 
 
 def resolve_photo_path(stored):
-    """DB'deki değeri okunabilir yola çevirir."""
+    """DB'deki değeri okunabilir yola çevirir. .nomedia olsa bile doğrudan dosyayı bulur."""
     if not stored:
         return ""
     p = str(stored).strip()
@@ -243,7 +243,7 @@ def is_heic(path):
 
 def convert_heic_to_jpg_native(src_path, dest_path):
     """Android'in yerel Bitmap kütüphanesiyle HEIC -> JPG dönüşümü yapar.
-    Kivy'nin HEIC dosyalarını desteklememesi sorununu çözer."""
+    Scoped Storage sorunlarını aşmak için dosyayı önce yerel bir geçici hedefe kopyalar."""
     if platform != "android": return False
     try:
         from jnius import autoclass
@@ -251,15 +251,26 @@ def convert_heic_to_jpg_native(src_path, dest_path):
         Bitmap = autoclass('android.graphics.Bitmap')
         FileOutputStream = autoclass('java.io.FileOutputStream')
         
-        bitmap = BitmapFactory.decodeFile(src_path)
-        if bitmap is None: return False
+        # Scoped Storage Engelini Aşma: Python ile erişilebilen dosyayı kendi klasörümüze çekiyoruz
+        tmp_heic = dest_path + ".tmp.heic"
+        shutil.copyfile(src_path, tmp_heic)
+        
+        bitmap = BitmapFactory.decodeFile(tmp_heic)
+        if bitmap is None: 
+            try: os.remove(tmp_heic)
+            except: pass
+            return False
         
         out = FileOutputStream(dest_path)
         success = bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
         out.flush()
         out.close()
+        
+        try: os.remove(tmp_heic)
+        except: pass
+        
         return success
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -478,7 +489,8 @@ def _uri_real_path(uri):
 
 def _copy_uri_to_file(uri, dest_path):
     """
-    JNI çökmesini tamamen engelleyen saf Byte kopyalama fonksiyonu.
+    Kamera uygulamasından gelen URI'yi JNI hatasına düşmeden,
+    Android'in nativ FileUtils veya Channels kütüphaneleriyle aktarır.
     """
     try:
         from jnius import autoclass
@@ -487,13 +499,15 @@ def _copy_uri_to_file(uri, dest_path):
         if ins is None: return False
         
         fos = autoclass('java.io.FileOutputStream')(dest_path)
-        # Saf Byte Array - JNI çökmesini aşmanın en stabil yolu
-        buf = autoclass('[B')(8192) 
         
-        while True:
-            n = ins.read(buf)
-            if n == -1: break
-            fos.write(buf, 0, n)
+        if android_api_level() >= 29:
+            FileUtils = autoclass('android.os.FileUtils')
+            FileUtils.copy(ins, fos)
+        else:
+            Channels = autoclass('java.nio.channels.Channels')
+            src_channel = Channels.newChannel(ins)
+            dest_channel = fos.getChannel()
+            dest_channel.transferFrom(src_channel, 0, 9223372036854775807)
             
         fos.close()
         ins.close()
@@ -527,6 +541,7 @@ class CameraCapture:
         self._bound = False
         self._done = False
         self._attempts = 0
+        self._result_intent = None
         self._result_code = None
         self._started_at = 0.0
 
@@ -635,8 +650,17 @@ class CameraCapture:
         try:
             if request_code != CameraCapture.REQ: return
             
-            # intent objesine dokunmuyoruz. Ana çökme sebebi intent'i bu thread'de okumaktı.
             self._result_code = result_code
+            self._intent_uri_str = ""
+            
+            if intent:
+                try:
+                    data = intent.getData()
+                    if data:
+                        self._intent_uri_str = data.toString()
+                except Exception:
+                    pass
+                    
             Clock.schedule_once(lambda dt: self.collect(), 0.5)
         except Exception:
             pass
@@ -702,6 +726,17 @@ class CameraCapture:
                     return self.dest
             except Exception:
                 pass
+        
+        if getattr(self, "_intent_uri_str", ""):
+            try:
+                from jnius import autoclass
+                Uri = autoclass('android.net.Uri')
+                uri = Uri.parse(self._intent_uri_str)
+                if self.dest and _copy_uri_to_file(uri, self.dest) and verify_image(self.dest):
+                    return self.dest
+            except Exception:
+                pass
+
         return ""
 
     def _apply(self, src):
@@ -1679,7 +1714,6 @@ class EvimApp(App):
         else:
             start_path = os.path.expanduser("~")
             
-        # Filtrelere .heic ve .heif eklendi
         fc = FileChooserListView(path=start_path, filters=["*.png", "*.jpg", "*.jpeg", "*.webp", "*.heic", "*.heif"])
         box.add_widget(fc)
         
