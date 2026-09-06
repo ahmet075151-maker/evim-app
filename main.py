@@ -3111,6 +3111,7 @@ class EvimApp(App):
         move_field = field("Taşınma koli no")
         move_field.input_filter = "int"
 
+        # FOTOĞRAF SEÇİM ALANI
         photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(8))
         photo_slot = SafeImage(size_hint_x=None, width=dph(50),
                               no_photo_text="fotoğraf\nokunamıyor")
@@ -3138,31 +3139,18 @@ class EvimApp(App):
             update_photo_preview()
 
         def take_camera_photo(*a):
-            if not camera:
-                self._show_message("Hata", "Kamera modülü bulunamadı.")
-                return
-
-            def _cam_done(filepath):
-                def apply_cam(dt):
-                    if filepath and os.path.exists(filepath):
-                        final, stored = store_photo(filepath)
-                        if final:
-                            photo_state["current_file"] = final
-                            update_photo_preview()
-                            try: os.remove(filepath)
-                            except: pass
-                        else:
-                            self._show_message("Uyarı", "Fotoğraf kaydedilemedi.")
-                    else:
-                        pass
-                Clock.schedule_once(apply_cam, 0.2)
+            def _cam_done(filepath, err):
+                if not filepath:
+                    if err:
+                        self._show_message("Kamera", err)
+                    return
+                photo_state["current_file"] = filepath
+                update_photo_preview()
 
             try:
-                cache_dir = get_internal_dir() 
-                dest_path = os.path.join(cache_dir, new_photo_name())
-                camera.take_picture(filename=dest_path, on_complete=_cam_done)
+                CameraCapture.run(_cam_done)
             except Exception as e:
-                self._show_message("Kamera Hatası", str(e))
+                self._show_message("Hata", "Kamera açılamadı: %s" % e)
 
         btn_box = BoxLayout(spacing=dp(6))
         gal_btn = Button(text="Galeri", background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(12))
