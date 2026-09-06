@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Tam Stabil, Klasör İzinleri Çözülmüş Plyer Kamera)
+EVİM - Ev Eşya Envanteri Uygulaması (Tam Stabil, Hata Düzeltilmiş)
 """
 
 import os
@@ -1514,7 +1514,7 @@ class EvimApp(App):
             back.bind(on_release=lambda *a: Clock.schedule_once(lambda dt: on_back(), 0.1))
             bar.add_widget(back)
         lbl = Label(text=title, bold=True, font_size=fs(15), color=(1, 1, 1, 1), halign="left", valign="middle", shorten=True, size_hint_y=1)
-        lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
+        lbl.bind(size=lambda w, val: setattr(w, "text_size", val))
         bar.add_widget(lbl)
         if getattr(self, 'multi_select_mode', False) and bool(self.nav_stack):
             sel_btn = Button(text="Vazgeç", size_hint=(None, None), size=(dph(60), bar_h), background_normal="", background_color=(0,0,0,0), color=(1,1,1,1), font_size=fs(11), bold=True)
@@ -1791,7 +1791,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (val, None)))
+        lbl_cat.bind(size=lambda w, val: setattr(w, "text_size", val))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -1802,7 +1802,7 @@ class EvimApp(App):
             cat_grid.add_widget(cb)
         content.add_widget(cat_grid)
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width, None)))
+        lbl_rooms.bind(size=lambda w, val: setattr(w, "text_size", val))
         content.add_widget(lbl_rooms)
         rooms = DB.get_rooms()
         grid_cols = 1 if len(rooms) == 1 else 2
@@ -2789,14 +2789,10 @@ class EvimApp(App):
                             try: os.remove(filepath)
                             except: pass
                         else:
-                            self._show_message("Uyarı", "Fotoğraf kaydedilemedi. (Sistem tarafından engellendi veya bozuk)")
-                # Android işletim sisteminin dosyayı belleğe tamamen yazabilmesi için güvenli süre
+                            self._show_message("Uyarı", "Fotoğraf kaydedilemedi.")
                 Clock.schedule_once(apply_cam, 0.6)
 
             try:
-                # KAMERA UYGULAMASININ DOSYAYI YAZABİLMESİ İÇİN PUBLIC BİR KLASÖR (DCIM) KULLANMALIYIZ!
-                # Eski sürümde "get_internal_dir()" kullanıldığı için Android kamera uygulaması bu gizli 
-                # alana yetkisiz olduğundan dosyayı yazamıyor, 0 byte dönüyor ve sessizce hata veriyordu.
                 public_dir = "/storage/emulated/0/DCIM/Evim"
                 if platform == "android":
                     if not os.path.exists(public_dir):
