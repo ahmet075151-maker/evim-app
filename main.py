@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Stabil Kamera & Klasör Uyumlu)
+EVİM - Ev Eşya Envanteri Uygulaması (ContentResolver Kamera İzin Çözümü)
 """
 
 import os
@@ -519,7 +519,7 @@ def _copy_uri_to_file(uri, dest_path):
 
 
 class CameraCapture:
-    REQ = 0x2E2
+    REQ = 0x2E3
     _active = None
 
     def __init__(self, on_done):
@@ -562,18 +562,18 @@ class CameraCapture:
         p_dir = get_photo_dir()
         self.dest = os.path.join(p_dir, new_photo_name())
 
-        if android_api_level() >= 29:
-            try:
-                ContentValues = autoclass('android.content.ContentValues')
-                values = ContentValues()
-                values.put(MediaStore.Images.Media.DISPLAY_NAME, os.path.basename(self.dest))
-                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                values.put(MediaStore.Images.Media.RELATIVE_PATH, "Download/Evim/Fotograflar")
-                self.ms_uri = activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                if self.ms_uri:
-                    self.ms_path = _uri_real_path(self.ms_uri)
-            except Exception:
-                pass
+        # İçerik sağlayıcı (ContentResolver) ile güvenli geçici URI oluşturuyoruz
+        try:
+            ContentValues = autoclass('android.content.ContentValues')
+            values = ContentValues()
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, os.path.basename(self.dest))
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, "Download/Evim/Fotograflar")
+            self.ms_uri = activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if self.ms_uri:
+                self.ms_path = _uri_real_path(self.ms_uri)
+        except Exception:
+            pass
 
         out_obj = self.ms_uri if self.ms_uri else Uri.parse('file://' + self.dest)
 
@@ -599,11 +599,11 @@ class CameraCapture:
             pass
         self._bound = False
         
-        if result_code == 0: # Canceled
+        if result_code == 0:
             self.finish(False, "")
             return
             
-        Clock.schedule_once(lambda dt: self.collect(), 0.5)
+        Clock.schedule_once(lambda dt: self.collect(), 0.6)
 
     def collect(self):
         if self._done:
@@ -628,10 +628,10 @@ class CameraCapture:
                 return
 
         self._attempts += 1
-        if self._attempts <= 6:
-            Clock.schedule_once(lambda dt: self.collect(), 0.4)
+        if self._attempts <= 8:
+            Clock.schedule_once(lambda dt: self.collect(), 0.5)
         else:
-            self.finish(False, "Fotoğraf alınamadı.")
+            self.finish(False, "Fotoğraf işlenemedi.")
 
     def finish(self, success, path_or_err):
         if self._done: return
