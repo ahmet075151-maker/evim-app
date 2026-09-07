@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Tam Stabil, Hata Düzeltilmiş)
+EVİM - Ev Eşya Envanteri Uygulaması (Tekil Klasör, DCIM Kaldırıldı)
 """
 
 import os
@@ -110,7 +110,6 @@ sys.excepthook = global_exception_handler
 LEGACY_PHOTO_DIRS = [
     "/storage/emulated/0/Download/Evim/Fotograflar",
     "/storage/emulated/0/Evim/Fotograflar",
-    "/storage/emulated/0/DCIM/Evim",
 ]
 
 _photo_dir_cache = {"dir": None}
@@ -2793,15 +2792,13 @@ class EvimApp(App):
                 Clock.schedule_once(apply_cam, 0.6)
 
             try:
-                public_dir = "/storage/emulated/0/DCIM/Evim"
-                if platform == "android":
-                    if not os.path.exists(public_dir):
-                        try: os.makedirs(public_dir)
-                        except: public_dir = get_internal_dir()
-                else:
-                    public_dir = get_internal_dir()
+                # DCIM Yolu tamamen kaldırıldı: Artık doğrudan Download/Evim klasörüne kaydediliyor
+                download_dir = get_download_path()
+                if not os.path.exists(download_dir):
+                    try: os.makedirs(download_dir)
+                    except: download_dir = get_internal_dir()
                     
-                dest_path = os.path.join(public_dir, new_photo_name())
+                dest_path = os.path.join(download_dir, new_photo_name())
                 camera.take_picture(filename=dest_path, on_complete=_cam_done)
             except Exception as e:
                 self._show_message("Kamera Başlatma Hatası", str(e))
@@ -2935,7 +2932,7 @@ class EvimApp(App):
                 expiry=expiry_field.text.strip(),
                 loaned_to=loaned_field.text.strip(),
                 qty=int(q_val) if q_val else 0,
-                qty_min=int(qm_val) if qm_val else 0,
+                qty_min=int(qm_val) if q_val else 0,
                 tags=tags_field.text.strip(),
                 is_favorite=states["fav"],
                 is_sell=states["sell"],
