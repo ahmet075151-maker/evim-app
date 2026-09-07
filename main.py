@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (ContentResolver Kamera İzin Çözümü)
+EVİM - Ev Eşya Envanteri Uygulaması (Kamera Doğrulama Kilidi Kaldırıldı)
 """
 
 import os
@@ -295,30 +295,11 @@ def convert_heic_to_jpg_native(src_path, dest_path):
 def verify_image(path):
     if not path: return False
     try:
-        if not os.path.isfile(path) or os.path.getsize(path) < 100: return False
+        if not os.path.isfile(path) or os.path.getsize(path) < 10: return False
         if not os.access(path, os.R_OK): return False
     except Exception:
         return False
-        
-    if is_heic(path): return False
-
-    if PILImage is not None:
-        try:
-            with PILImage.open(path) as im:
-                im.load()
-                if im.width < 8 or im.height < 8: return False
-            return True
-        except Exception:
-            pass
-            
-    try:
-        with open(path, "rb") as f: head = f.read(16)
-        if head[:3] == b"\xff\xd8\xff": return True
-        if head[:8] == b"\x89PNG\r\n\x1a\n": return True
-        if head[:4] == b"RIFF" and head[8:12] == b"WEBP": return True
-    except Exception:
-        pass
-    return False
+    return True
 
 
 def new_photo_name():
@@ -562,7 +543,6 @@ class CameraCapture:
         p_dir = get_photo_dir()
         self.dest = os.path.join(p_dir, new_photo_name())
 
-        # İçerik sağlayıcı (ContentResolver) ile güvenli geçici URI oluşturuyoruz
         try:
             ContentValues = autoclass('android.content.ContentValues')
             values = ContentValues()
@@ -610,14 +590,14 @@ class CameraCapture:
             return
             
         src = ""
-        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 100:
+        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 10:
             src = self.ms_path
         elif self.ms_uri and _copy_uri_to_file(self.ms_uri, self.dest):
             src = self.dest
-        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 100:
+        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 10:
             src = self.dest
             
-        if src and verify_image(src):
+        if src:
             final, _ = store_photo(src)
             try:
                 if src != final and os.path.exists(src):
@@ -628,7 +608,7 @@ class CameraCapture:
                 return
 
         self._attempts += 1
-        if self._attempts <= 8:
+        if self._attempts <= 10:
             Clock.schedule_once(lambda dt: self.collect(), 0.5)
         else:
             self.finish(False, "Fotoğraf işlenemedi.")
