@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Tekil Klasör, DCIM Kaldırıldı)
+EVİM - Ev Eşya Envanteri Uygulaması (Kamera Sadece Fotograflar Klasörüne Kayıt)
 """
 
 import os
@@ -2781,24 +2781,29 @@ class EvimApp(App):
             def _cam_done(filepath):
                 def apply_cam(dt):
                     if filepath and os.path.exists(filepath):
-                        final, stored = store_photo(filepath)
+                        # Çekilen fotoğrafı doğrudan FOTOGRAFLAR klasörüne (get_photo_dir()) taşıyoruz
+                        p_dir = get_photo_dir()
+                        dest_final = os.path.join(p_dir, new_photo_name())
+                        try:
+                            if os.path.abspath(filepath) != os.path.abspath(dest_final):
+                                shutil.copyfile(filepath, dest_final)
+                                os.remove(filepath)
+                        except Exception:
+                            dest_final = filepath
+
+                        final, stored = store_photo(dest_final)
                         if final:
                             photo_state["current_file"] = final
                             update_photo_preview()
-                            try: os.remove(filepath)
-                            except: pass
                         else:
-                            self._show_message("Uyarı", "Fotoğraf kaydedilemedi.")
-                Clock.schedule_once(apply_cam, 0.6)
+                            self._show_message("Uyarı", "Fotoğraf işlenemedi.")
+                Clock.schedule_once(apply_cam, 0.4)
 
             try:
-                # DCIM Yolu tamamen kaldırıldı: Artık doğrudan Download/Evim klasörüne kaydediliyor
-                download_dir = get_download_path()
-                if not os.path.exists(download_dir):
-                    try: os.makedirs(download_dir)
-                    except: download_dir = get_internal_dir()
-                    
-                dest_path = os.path.join(download_dir, new_photo_name())
+                # Kamera fotoğrafı geçici olarak doğrudan FOTOGRAFLAR klasörüne çeker,
+                # böylece dışarıda (ana Download/Evim içinde) ASLA kopya kalmaz.
+                target_folder = get_photo_dir()
+                dest_path = os.path.join(target_folder, new_photo_name())
                 camera.take_picture(filename=dest_path, on_complete=_cam_done)
             except Exception as e:
                 self._show_message("Kamera Başlatma Hatası", str(e))
@@ -2932,7 +2937,7 @@ class EvimApp(App):
                 expiry=expiry_field.text.strip(),
                 loaned_to=loaned_field.text.strip(),
                 qty=int(q_val) if q_val else 0,
-                qty_min=int(qm_val) if q_val else 0,
+                qty_min=int(qm_val) if qm_val else 0,
                 tags=tags_field.text.strip(),
                 is_favorite=states["fav"],
                 is_sell=states["sell"],
