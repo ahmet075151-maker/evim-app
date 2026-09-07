@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Eşya Envanteri Uygulaması (Kamera Bekleme Süresi ve Doğrulama Düzeltildi)
+EVİM - Ev Eşya Envanteri Uygulaması (Stabil Kamera & Klasör Uyumlu)
 """
 
 import os
@@ -42,11 +42,6 @@ from kivy.clock import Clock
 from kivy.graphics import Color, RoundedRectangle, Ellipse, Line, PushMatrix, PopMatrix, Rotate
 
 import sqlite3
-
-try:
-    from plyer import camera
-except Exception:
-    camera = None
 
 try:
     from PIL import Image as PILImage, ExifTags, ImageOps
@@ -465,6 +460,187 @@ def migrate_old_photos():
                     except: continue
     except Exception:
         pass
+
+
+def _android_activity():
+    from jnius import autoclass
+    return autoclass('org.kivy.android.PythonActivity').mActivity
+
+_api_cache = {}
+
+def android_api_level():
+    if "api" not in _api_cache:
+        lvl = 0
+        if platform == "android":
+            try:
+                from jnius import autoclass
+                lvl = int(autoclass('android.os.Build$VERSION').SDK_INT)
+            except Exception:
+                lvl = 0
+        _api_cache["api"] = lvl
+    return _api_cache["api"]
+
+
+def _uri_real_path(uri):
+    try:
+        activity = _android_activity()
+        cursor = activity.getContentResolver().query(uri, None, None, None, None)
+        if cursor is None: return ""
+        try:
+            if cursor.moveToFirst():
+                idx = cursor.getColumnIndex('_data')
+                if idx >= 0: return cursor.getString(idx) or ""
+        finally:
+            cursor.close()
+    except Exception:
+        pass
+    return ""
+
+
+def _copy_uri_to_file(uri, dest_path):
+    try:
+        from jnius import autoclass
+        activity = _android_activity()
+        ins = activity.getContentResolver().openInputStream(uri)
+        if ins is None: return False
+        fos = autoclass('java.io.FileOutputStream')(dest_path)
+        if android_api_level() >= 29:
+            autoclass('android.os.FileUtils').copy(ins, fos)
+        else:
+            Channels = autoclass('java.nio.channels.Channels')
+            src_channel = Channels.newChannel(ins)
+            dest_channel = fos.getChannel()
+            dest_channel.transferFrom(src_channel, 0, 9223372036854775807)
+        fos.close()
+        ins.close()
+        return os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
+    except Exception:
+        return False
+
+
+class CameraCapture:
+    REQ = 0x2E2
+    _active = None
+
+    def __init__(self, on_done):
+        self.on_done = on_done
+        self.dest = ""
+        self.ms_uri = None
+        self.ms_path = ""
+        self._bound = False
+        self._done = False
+        self._attempts = 0
+
+    @classmethod
+    def run(cls, on_done):
+        if cls._active is not None:
+            return False
+        obj = cls(on_done)
+        cls._active = obj
+        try:
+            obj.start()
+        except Exception as e:
+            obj.finish(False, str(e))
+        return True
+
+    def start(self):
+        if platform != "android":
+            self.finish(False, "Kamera yalnızca Android'de çalışır.")
+            return
+
+        try:
+            from android import activity as android_activity
+            from jnius import autoclass, cast
+            Intent = autoclass('android.content.Intent')
+            MediaStore = autoclass('android.provider.MediaStore')
+            Uri = autoclass('android.net.Uri')
+            activity = _android_activity()
+        except Exception as e:
+            self.finish(False, str(e))
+            return
+
+        p_dir = get_photo_dir()
+        self.dest = os.path.join(p_dir, new_photo_name())
+
+        if android_api_level() >= 29:
+            try:
+                ContentValues = autoclass('android.content.ContentValues')
+                values = ContentValues()
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, os.path.basename(self.dest))
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                values.put(MediaStore.Images.Media.RELATIVE_PATH, "Download/Evim/Fotograflar")
+                self.ms_uri = activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if self.ms_uri:
+                    self.ms_path = _uri_real_path(self.ms_uri)
+            except Exception:
+                pass
+
+        out_obj = self.ms_uri if self.ms_uri else Uri.parse('file://' + self.dest)
+
+        try:
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cast('android.os.Parcelable', out_obj))
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            android_activity.unbind(on_activity_result=self._on_activity_result)
+            android_activity.bind(on_activity_result=self._on_activity_result)
+            self._bound = True
+            activity.startActivityForResult(intent, CameraCapture.REQ)
+        except Exception as e:
+            self.finish(False, str(e))
+
+    def _on_activity_result(self, request_code, result_code, intent):
+        if request_code != CameraCapture.REQ:
+            return
+        try:
+            from android import activity as android_activity
+            android_activity.unbind(on_activity_result=self._on_activity_result)
+        except Exception:
+            pass
+        self._bound = False
+        
+        if result_code == 0: # Canceled
+            self.finish(False, "")
+            return
+            
+        Clock.schedule_once(lambda dt: self.collect(), 0.5)
+
+    def collect(self):
+        if self._done:
+            return
+            
+        src = ""
+        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 100:
+            src = self.ms_path
+        elif self.ms_uri and _copy_uri_to_file(self.ms_uri, self.dest):
+            src = self.dest
+        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 100:
+            src = self.dest
+            
+        if src and verify_image(src):
+            final, _ = store_photo(src)
+            try:
+                if src != final and os.path.exists(src):
+                    os.remove(src)
+            except: pass
+            if final:
+                self.finish(True, final)
+                return
+
+        self._attempts += 1
+        if self._attempts <= 6:
+            Clock.schedule_once(lambda dt: self.collect(), 0.4)
+        else:
+            self.finish(False, "Fotoğraf alınamadı.")
+
+    def finish(self, success, path_or_err):
+        if self._done: return
+        self._done = True
+        if CameraCapture._active is self:
+            CameraCapture._active = None
+        try:
+            self.on_done(success, path_or_err)
+        except: pass
 
 
 def load_settings():
@@ -2774,37 +2950,17 @@ class EvimApp(App):
             update_photo_preview()
 
         def take_camera_photo(*a):
-            if not camera:
-                self._show_message("Hata", "Kamera modülü bulunamadı.")
-                return
-
-            def _cam_done(filepath):
-                # Dosyanın diske tamamen yazılmasını ve boyutu oluşmasını sağlayan döngülü güvenli kontrol
-                def check_and_apply(dt, attempts=0):
-                    if filepath and os.path.exists(filepath) and os.path.getsize(filepath) > 100:
-                        final, stored = store_photo(filepath)
-                        if final:
-                            photo_state["current_file"] = final
-                            update_photo_preview()
-                            try: os.remove(filepath)
-                            except: pass
-                            return
-                    if attempts < 10:
-                        # Henüz yazılmadıysa 0.3 saniye arayla tekrar dene
-                        Clock.schedule_once(lambda d: check_and_apply(d, attempts + 1), 0.3)
-                    else:
-                        self._show_message("Uyarı", "Fotoğraf dosyası işlenemedi veya boş oluştu.")
-                
-                Clock.schedule_once(lambda d: check_and_apply(d, 0), 0.4)
+            def _cam_done(success, path_or_err):
+                if success:
+                    photo_state["current_file"] = path_or_err
+                    update_photo_preview()
+                elif path_or_err:
+                    self._show_message("Kamera Hatası", path_or_err)
 
             try:
-                # Fotoğraf doğrudan FOTOGRAFLAR klasörüne (get_photo_dir()) çekiliyor
-                # Böylece dışarıda (Download/Evim ana dizininde) asla kopya kalmaz.
-                target_folder = get_photo_dir()
-                dest_path = os.path.join(target_folder, new_photo_name())
-                camera.take_picture(filename=dest_path, on_complete=_cam_done)
+                CameraCapture.run(_cam_done)
             except Exception as e:
-                self._show_message("Kamera Başlatma Hatası", str(e))
+                self._show_message("Hata", f"Kamera başlatılamadı: {str(e)}")
 
         btn_box = BoxLayout(spacing=dp(6))
         gal_btn = Button(text="Galeri", background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(12))
@@ -2935,7 +3091,7 @@ class EvimApp(App):
                 expiry=expiry_field.text.strip(),
                 loaned_to=loaned_field.text.strip(),
                 qty=int(q_val) if q_val else 0,
-                qty_min=int(qm_val) if q_val else 0,
+                qty_min=int(qm_val) if qm_val else 0,
                 tags=tags_field.text.strip(),
                 is_favorite=states["fav"],
                 is_sell=states["sell"],
