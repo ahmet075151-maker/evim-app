@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Kamera Sadece Fotograflar Klasörüne Kayıt)
+EVİM - Eşya Envanteri Uygulaması (Kamera Bekleme Süresi ve Doğrulama Düzeltildi)
 """
 
 import os
@@ -2779,29 +2779,27 @@ class EvimApp(App):
                 return
 
             def _cam_done(filepath):
-                def apply_cam(dt):
-                    if filepath and os.path.exists(filepath):
-                        # Çekilen fotoğrafı doğrudan FOTOGRAFLAR klasörüne (get_photo_dir()) taşıyoruz
-                        p_dir = get_photo_dir()
-                        dest_final = os.path.join(p_dir, new_photo_name())
-                        try:
-                            if os.path.abspath(filepath) != os.path.abspath(dest_final):
-                                shutil.copyfile(filepath, dest_final)
-                                os.remove(filepath)
-                        except Exception:
-                            dest_final = filepath
-
-                        final, stored = store_photo(dest_final)
+                # Dosyanın diske tamamen yazılmasını ve boyutu oluşmasını sağlayan döngülü güvenli kontrol
+                def check_and_apply(dt, attempts=0):
+                    if filepath and os.path.exists(filepath) and os.path.getsize(filepath) > 100:
+                        final, stored = store_photo(filepath)
                         if final:
                             photo_state["current_file"] = final
                             update_photo_preview()
-                        else:
-                            self._show_message("Uyarı", "Fotoğraf işlenemedi.")
-                Clock.schedule_once(apply_cam, 0.4)
+                            try: os.remove(filepath)
+                            except: pass
+                            return
+                    if attempts < 10:
+                        # Henüz yazılmadıysa 0.3 saniye arayla tekrar dene
+                        Clock.schedule_once(lambda d: check_and_apply(d, attempts + 1), 0.3)
+                    else:
+                        self._show_message("Uyarı", "Fotoğraf dosyası işlenemedi veya boş oluştu.")
+                
+                Clock.schedule_once(lambda d: check_and_apply(d, 0), 0.4)
 
             try:
-                # Kamera fotoğrafı geçici olarak doğrudan FOTOGRAFLAR klasörüne çeker,
-                # böylece dışarıda (ana Download/Evim içinde) ASLA kopya kalmaz.
+                # Fotoğraf doğrudan FOTOGRAFLAR klasörüne (get_photo_dir()) çekiliyor
+                # Böylece dışarıda (Download/Evim ana dizininde) asla kopya kalmaz.
                 target_folder = get_photo_dir()
                 dest_path = os.path.join(target_folder, new_photo_name())
                 camera.take_picture(filename=dest_path, on_complete=_cam_done)
@@ -2937,7 +2935,7 @@ class EvimApp(App):
                 expiry=expiry_field.text.strip(),
                 loaned_to=loaned_field.text.strip(),
                 qty=int(q_val) if q_val else 0,
-                qty_min=int(qm_val) if qm_val else 0,
+                qty_min=int(qm_val) if q_val else 0,
                 tags=tags_field.text.strip(),
                 is_favorite=states["fav"],
                 is_sell=states["sell"],
