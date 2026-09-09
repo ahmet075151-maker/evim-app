@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Kamera Bekleme Süresi Uzatılmış Kararlı Sürüm)
+EVİM - Ev Eşya Envanteri Uygulaması (Kamera Dosya Tarama & Eşleme Çözümü)
 """
 
 import os
@@ -511,6 +511,13 @@ class CameraCapture:
         self._bound = False
         self._done = False
         self._attempts = 0
+        self._target_dir = get_photo_dir()
+        # Çekim öncesi klasördeki mevcut dosyaları listeliyoruz (yeni geleni tespit etmek için)
+        self._existing_files = set()
+        try:
+            if os.path.exists(self._target_dir):
+                self._existing_files = set(os.listdir(self._target_dir))
+        except: pass
 
     @classmethod
     def run(cls, on_done):
@@ -540,8 +547,7 @@ class CameraCapture:
             self.finish(False, str(e))
             return
 
-        p_dir = get_photo_dir()
-        self.dest = os.path.join(p_dir, new_photo_name())
+        self.dest = os.path.join(self._target_dir, new_photo_name())
 
         try:
             ContentValues = autoclass('android.content.ContentValues')
@@ -583,19 +589,35 @@ class CameraCapture:
             self.finish(False, "")
             return
             
-        Clock.schedule_once(lambda dt: self.collect(), 0.5)
+        Clock.schedule_once(lambda dt: self.collect(), 0.6)
 
     def collect(self):
         if self._done:
             return
             
         src = ""
+        # 1. MediaStore path kontrolü
         if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 0:
             src = self.ms_path
+        # 2. URI akış kontrolü
         elif self.ms_uri and _copy_uri_to_file(self.ms_uri, self.dest):
             src = self.dest
+        # 3. Belirlenen hedef dosya kontrolü
         elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 0:
             src = self.dest
+        else:
+            # 4. KESİN ÇÖZÜM: Klasör taranır, kamera kapandıktan sonra eklenen yeni dosya bulunur
+            try:
+                if os.path.exists(self._target_dir):
+                    current_files = set(os.listdir(self._target_dir))
+                    new_files = current_files - self._existing_files
+                    for nf in new_files:
+                        if nf.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                            cand = os.path.join(self._target_dir, nf)
+                            if os.path.getsize(cand) > 0:
+                                src = cand
+                                break
+            except: pass
             
         if src:
             final, _ = store_photo(src)
@@ -609,7 +631,6 @@ class CameraCapture:
 
         self._attempts += 1
         if self._attempts <= 15:
-            # Bekleme döngüsü artırıldı (Toplam ~7-8 saniye sabırla beklenir)
             Clock.schedule_once(lambda dt: self.collect(), 0.5)
         else:
             self.finish(False, "Fotoğraf işlenemedi.")
