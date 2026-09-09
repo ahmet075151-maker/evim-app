@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Kamera Doğrulama Kilidi Kaldırıldı)
+EVİM - Ev Eşya Envanteri Uygulaması (Kamera Bekleme Süresi Uzatılmış Kararlı Sürüm)
 """
 
 import os
@@ -295,7 +295,7 @@ def convert_heic_to_jpg_native(src_path, dest_path):
 def verify_image(path):
     if not path: return False
     try:
-        if not os.path.isfile(path) or os.path.getsize(path) < 10: return False
+        if not os.path.isfile(path) or os.path.getsize(path) < 5: return False
         if not os.access(path, os.R_OK): return False
     except Exception:
         return False
@@ -583,18 +583,18 @@ class CameraCapture:
             self.finish(False, "")
             return
             
-        Clock.schedule_once(lambda dt: self.collect(), 0.6)
+        Clock.schedule_once(lambda dt: self.collect(), 0.5)
 
     def collect(self):
         if self._done:
             return
             
         src = ""
-        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 10:
+        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 0:
             src = self.ms_path
         elif self.ms_uri and _copy_uri_to_file(self.ms_uri, self.dest):
             src = self.dest
-        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 10:
+        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 0:
             src = self.dest
             
         if src:
@@ -608,7 +608,8 @@ class CameraCapture:
                 return
 
         self._attempts += 1
-        if self._attempts <= 10:
+        if self._attempts <= 15:
+            # Bekleme döngüsü artırıldı (Toplam ~7-8 saniye sabırla beklenir)
             Clock.schedule_once(lambda dt: self.collect(), 0.5)
         else:
             self.finish(False, "Fotoğraf işlenemedi.")
