@@ -1,0 +1,8 @@
+{
+  "name": "Evim",
+  "description": "Ev eşya ve koli envanteri takip uygulaması",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
