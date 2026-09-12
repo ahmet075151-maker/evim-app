@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-EVİM - Ev Eşya Envanteri Uygulaması (Kamera Dosya Tarama & Eşleme Çözümü)
+EVİM - Ev Eşya Envanteri Uygulaması (Tam Stabil, Plyer Kamera Düzeltmesi, HEIC Yön Desteği)
 """
 
 import os
@@ -44,6 +44,11 @@ from kivy.graphics import Color, RoundedRectangle, Ellipse, Line, PushMatrix, Po
 import sqlite3
 
 try:
+    from plyer import camera
+except Exception:
+    camera = None
+
+try:
     from PIL import Image as PILImage, ExifTags, ImageOps
 except ImportError:
     PILImage = None
@@ -81,6 +86,7 @@ def global_exception_handler(exctype, value, tb):
     log_text += "TARIH: " + datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S") + "\n"
     log_text += "".join(traceback.format_exception(exctype, value, tb))
     
+    # 1. Download Klasörüne yazmayı dene
     try:
         dl_dir = get_download_path()
         if not os.path.exists(dl_dir):
@@ -90,6 +96,7 @@ def global_exception_handler(exctype, value, tb):
     except Exception:
         pass
         
+    # 2. İç Klasöre yazmayı dene
     try:
         int_dir = get_internal_dir()
         with open(os.path.join(int_dir, "evim_hata_raporu.txt"), "a", encoding="utf-8") as f:
@@ -105,6 +112,7 @@ sys.excepthook = global_exception_handler
 LEGACY_PHOTO_DIRS = [
     "/storage/emulated/0/Download/Evim/Fotograflar",
     "/storage/emulated/0/Evim/Fotograflar",
+    "/storage/emulated/0/DCIM/Evim",
 ]
 
 _photo_dir_cache = {"dir": None}
@@ -227,6 +235,7 @@ def photo_stored_value(full_path):
 
 
 def is_heic(path):
+    """Dosyanın Apple HEIC formatında olup olmadığını kontrol eder."""
     if not path: return False
     if path.lower().endswith(('.heic', '.heif')): return True
     try:
@@ -240,6 +249,8 @@ def is_heic(path):
 
 
 def convert_heic_to_jpg_native(src_path, dest_path):
+    """Android'in yerel kütüphanesiyle HEIC -> JPG dönüşümü yapar.
+    Ayrıca HEIC'in EXIF yön verisini okuyarak resmin dikey/yatay olmasını ayarlar."""
     if platform != "android": return False
     try:
         from jnius import autoclass
@@ -250,6 +261,7 @@ def convert_heic_to_jpg_native(src_path, dest_path):
         Matrix = autoclass('android.graphics.Matrix')
         Bitmap = autoclass('android.graphics.Bitmap')
         
+        # Dosyaya erişim sorunu olmaması için kendi tmp alanımıza kopyalıyoruz
         tmp_heic = dest_path + ".tmp.heic"
         shutil.copyfile(src_path, tmp_heic)
         
@@ -259,6 +271,7 @@ def convert_heic_to_jpg_native(src_path, dest_path):
             except: pass
             return False
             
+        # EXIF Yönünü (Rotation) Oku ve Matris ile Çevir (Heic'lerin yan durmasını engeller)
         try:
             exif = ExifInterface(tmp_heic)
             orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
@@ -293,13 +306,33 @@ def convert_heic_to_jpg_native(src_path, dest_path):
 
 
 def verify_image(path):
+    """Dosya okunaklı ve Kivy tarafından desteklenen bir resim mi kontrol eder."""
     if not path: return False
     try:
-        if not os.path.isfile(path) or os.path.getsize(path) < 5: return False
+        if not os.path.isfile(path) or os.path.getsize(path) < 100: return False
         if not os.access(path, os.R_OK): return False
     except Exception:
         return False
-    return True
+        
+    if is_heic(path): return False
+
+    if PILImage is not None:
+        try:
+            with PILImage.open(path) as im:
+                im.load()
+                if im.width < 8 or im.height < 8: return False
+            return True
+        except Exception:
+            pass
+            
+    try:
+        with open(path, "rb") as f: head = f.read(16)
+        if head[:3] == b"\xff\xd8\xff": return True # JPEG
+        if head[:8] == b"\x89PNG\r\n\x1a\n": return True # PNG
+        if head[:4] == b"RIFF" and head[8:12] == b"WEBP": return True # WEBP
+    except Exception:
+        pass
+    return False
 
 
 def new_photo_name():
@@ -387,6 +420,7 @@ def store_photo(src_path):
     final = ""
     try:
         if is_heic(src_path) and platform == "android":
+            # HEIC ise dönüştür (dönüştürücü artık rotasyonu da ayarlıyor)
             if convert_heic_to_jpg_native(src_path, dest):
                 final = dest
         else:
@@ -443,6 +477,11 @@ def migrate_old_photos():
         pass
 
 
+def _cam_log(msg):
+    try: print("[EvimKamera] %s" % msg)
+    except: pass
+
+
 def _android_activity():
     from jnius import autoclass
     return autoclass('org.kivy.android.PythonActivity').mActivity
@@ -473,8 +512,8 @@ def _uri_real_path(uri):
                 if idx >= 0: return cursor.getString(idx) or ""
         finally:
             cursor.close()
-    except Exception:
-        pass
+    except Exception as e:
+        _cam_log("_uri_real_path: %s" % e)
     return ""
 
 
@@ -484,23 +523,40 @@ def _copy_uri_to_file(uri, dest_path):
         activity = _android_activity()
         ins = activity.getContentResolver().openInputStream(uri)
         if ins is None: return False
+        
         fos = autoclass('java.io.FileOutputStream')(dest_path)
+        
         if android_api_level() >= 29:
-            autoclass('android.os.FileUtils').copy(ins, fos)
+            FileUtils = autoclass('android.os.FileUtils')
+            FileUtils.copy(ins, fos)
         else:
             Channels = autoclass('java.nio.channels.Channels')
             src_channel = Channels.newChannel(ins)
             dest_channel = fos.getChannel()
             dest_channel.transferFrom(src_channel, 0, 9223372036854775807)
+            
         fos.close()
         ins.close()
         return os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
-    except Exception:
+    except Exception as e:
+        _cam_log("_copy_uri_to_file fatal crash avoided: %s" % e)
+        return False
+
+
+def _touch_own_file(path):
+    try:
+        with open(path, "ab"):
+            pass
+        return True
+    except Exception as e:
+        _cam_log("_touch_own_file: %s" % e)
         return False
 
 
 class CameraCapture:
-    REQ = 0x2E3
+    REQ = 0x2E1
+    RESULT_OK = -1
+    RESULT_CANCELED = 0
     _active = None
 
     def __init__(self, on_done):
@@ -511,57 +567,93 @@ class CameraCapture:
         self._bound = False
         self._done = False
         self._attempts = 0
-        self._target_dir = get_photo_dir()
-        # Çekim öncesi klasördeki mevcut dosyaları listeliyoruz (yeni geleni tespit etmek için)
-        self._existing_files = set()
-        try:
-            if os.path.exists(self._target_dir):
-                self._existing_files = set(os.listdir(self._target_dir))
-        except: pass
+        self._result_intent = None
+        self._result_code = None
+        self._started_at = 0.0
 
     @classmethod
     def run(cls, on_done):
         if cls._active is not None:
-            return False
+            try:
+                stale = (Clock.get_time() - cls._active._started_at) > 40
+            except Exception:
+                stale = True
+            if stale:
+                cls._active.finish_with_error("")
+            else:
+                on_done("", "Bir kamera çekimi hâlâ sürüyor, lütfen bekleyin.")
+                return False
         obj = cls(on_done)
+        obj._started_at = Clock.get_time()
         cls._active = obj
         try:
             obj.start()
         except Exception as e:
-            obj.finish(False, str(e))
+            obj.finish_with_error("Kamera açılamadı: %s" % e)
         return True
 
     def start(self):
         if platform != "android":
-            self.finish(False, "Kamera yalnızca Android'de çalışır.")
+            if camera is None:
+                return self.finish_with_error("Kamera yalnızca Android sürümünde çalışır.")
+            self.dest = os.path.join(get_photo_dir(), new_photo_name())
+            _touch_own_file(self.dest)
+            camera.take_picture(filename=self.dest, on_complete=self._plyer_done)
             return
 
         try:
             from android import activity as android_activity
+        except Exception as e:
+            return self.finish_with_error("Android etkinlik katmanı yüklenemedi: %s" % e)
+
+        try:
+            from android.permissions import Permission, check_permissions
+            granted = Permission.CAMERA in check_permissions([Permission.CAMERA])
+            if not granted:
+                try:
+                    from android.permissions import request_permissions
+                    request_permissions([Permission.CAMERA])
+                except: pass
+                return self.finish_with_error(
+                    "Kamera izni verilmedi.\n\nTelefon: Ayarlar › Uygulamalar › Evim › "
+                    "İzinler › Kamera › İzin ver, sonra tekrar deneyin.")
+        except Exception:
+            pass
+
+        try:
             from jnius import autoclass, cast
             Intent = autoclass('android.content.Intent')
             MediaStore = autoclass('android.provider.MediaStore')
             Uri = autoclass('android.net.Uri')
             activity = _android_activity()
         except Exception as e:
-            self.finish(False, str(e))
-            return
+            return self.finish_with_error("Android köprüsü hatası: %s" % e)
 
-        self.dest = os.path.join(self._target_dir, new_photo_name())
+        p_dir = get_photo_dir()
+        self.dest = os.path.join(p_dir, new_photo_name())
+        _touch_own_file(self.dest)
 
-        try:
-            ContentValues = autoclass('android.content.ContentValues')
-            values = ContentValues()
-            values.put(MediaStore.Images.Media.DISPLAY_NAME, os.path.basename(self.dest))
-            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            values.put(MediaStore.Images.Media.RELATIVE_PATH, "Download/Evim/Fotograflar")
-            self.ms_uri = activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            if self.ms_uri:
-                self.ms_path = _uri_real_path(self.ms_uri)
-        except Exception:
-            pass
+        if android_api_level() >= 29:
+            try:
+                ContentValues = autoclass('android.content.ContentValues')
+                values = ContentValues()
+                tmp_name = "evim_kamera_%s.jpg" % uuid.uuid4().hex[:8]
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, tmp_name)
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/EvimTmp")
+                uri = activity.getContentResolver().insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if uri is not None:
+                    self.ms_uri = uri
+                    self.ms_path = _uri_real_path(uri)
+            except Exception as e:
+                _cam_log("mediastore insert failed: %s" % e)
+                self.ms_uri = None
 
-        out_obj = self.ms_uri if self.ms_uri else Uri.parse('file://' + self.dest)
+        if self.ms_uri is not None:
+            out_obj = self.ms_uri
+        else:
+            out_obj = Uri.parse('file://' + self.dest)
 
         try:
             intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
@@ -573,76 +665,171 @@ class CameraCapture:
             self._bound = True
             activity.startActivityForResult(intent, CameraCapture.REQ)
         except Exception as e:
-            self.finish(False, str(e))
+            self._cleanup_media()
+            return self.finish_with_error("Kamera başlatılamadı: %s" % e)
+
+    def _plyer_done(self, filepath):
+        Clock.schedule_once(lambda dt: self.collect(), 0.6)
+        return False
 
     def _on_activity_result(self, request_code, result_code, intent):
-        if request_code != CameraCapture.REQ:
-            return
         try:
-            from android import activity as android_activity
-            android_activity.unbind(on_activity_result=self._on_activity_result)
+            if request_code != CameraCapture.REQ: return
+            
+            self._result_code = result_code
+            self._intent_uri_str = ""
+            
+            if intent:
+                try:
+                    data = intent.getData()
+                    if data:
+                        self._intent_uri_str = data.toString()
+                except Exception:
+                    pass
+                    
+            Clock.schedule_once(lambda dt: self.collect(), 0.5)
         except Exception:
             pass
-        self._bound = False
-        
-        if result_code == 0:
-            self.finish(False, "")
-            return
-            
-        Clock.schedule_once(lambda dt: self.collect(), 0.6)
 
     def collect(self):
         if self._done:
             return
             
-        src = ""
-        # 1. MediaStore path kontrolü
-        if self.ms_path and os.path.exists(self.ms_path) and os.path.getsize(self.ms_path) > 0:
-            src = self.ms_path
-        # 2. URI akış kontrolü
-        elif self.ms_uri and _copy_uri_to_file(self.ms_uri, self.dest):
-            src = self.dest
-        # 3. Belirlenen hedef dosya kontrolü
-        elif os.path.exists(self.dest) and os.path.getsize(self.dest) > 0:
-            src = self.dest
-        else:
-            # 4. KESİN ÇÖZÜM: Klasör taranır, kamera kapandıktan sonra eklenen yeni dosya bulunur
+        if self._bound:
             try:
-                if os.path.exists(self._target_dir):
-                    current_files = set(os.listdir(self._target_dir))
-                    new_files = current_files - self._existing_files
-                    for nf in new_files:
-                        if nf.endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                            cand = os.path.join(self._target_dir, nf)
-                            if os.path.getsize(cand) > 0:
-                                src = cand
-                                break
-            except: pass
+                from android import activity as android_activity
+                android_activity.unbind(on_activity_result=self._on_activity_result)
+            except Exception:
+                pass
+            self._bound = False
             
+        try:
+            self._collect_inner()
+        except Exception as e:
+            self._cleanup_media()
+            self.finish_with_error("Fotoğraf işlenirken hata: %s" % e)
+
+    def _collect_inner(self):
+        src = self._locate_captured()
         if src:
-            final, _ = store_photo(src)
-            try:
-                if src != final and os.path.exists(src):
-                    os.remove(src)
-            except: pass
-            if final:
-                self.finish(True, final)
-                return
+            if not verify_image(src):
+                self._attempts += 1
+                if self._attempts <= 6:
+                    Clock.schedule_once(lambda dt: self.collect(), 0.4)
+                    return
+                self._cleanup_media()
+                return self.finish_with_error(
+                    "Fotoğraf okunamadı (dosya bozuk veya erişilemiyor). "
+                    "Tekrar deneyin.")
+            return self._apply(src)
+
+        if getattr(self, "_result_code", None) == CameraCapture.RESULT_CANCELED:
+            self._cleanup_media()
+            return self.finish_with_error("")
 
         self._attempts += 1
-        if self._attempts <= 15:
-            Clock.schedule_once(lambda dt: self.collect(), 0.5)
-        else:
-            self.finish(False, "Fotoğraf işlenemedi.")
+        if self._attempts <= 6:
+            Clock.schedule_once(lambda dt: self.collect(), 0.4)
+            return
+        self._cleanup_media()
+        self.finish_with_error(
+            "Fotoğraf bulunamadı. Telefonunuzun kamera uygulaması dosyayı "
+            "uygulamanın klasörüne yazamıyor olabilir.")
 
-    def finish(self, success, path_or_err):
-        if self._done: return
+    def _locate_captured(self):
+        if self.ms_path and verify_image(self.ms_path):
+            return self.ms_path
+        if self.ms_uri is not None:
+            self.ms_path = self.ms_path or _uri_real_path(self.ms_uri)
+            if self.ms_path and verify_image(self.ms_path):
+                return self.ms_path
+            if self.dest and _copy_uri_to_file(self.ms_uri, self.dest) and verify_image(self.dest):
+                return self.dest
+        
+        if self.dest:
+            try:
+                if os.path.isfile(self.dest) and os.path.getsize(self.dest) > 0 and verify_image(self.dest):
+                    return self.dest
+            except Exception:
+                pass
+        
+        if getattr(self, "_intent_uri_str", ""):
+            try:
+                from jnius import autoclass
+                Uri = autoclass('android.net.Uri')
+                uri = Uri.parse(self._intent_uri_str)
+                if self.dest and _copy_uri_to_file(uri, self.dest) and verify_image(self.dest):
+                    return self.dest
+            except Exception:
+                pass
+
+        return ""
+
+    def _apply(self, src):
+        final = src
+        try:
+            if self.dest and os.path.abspath(src) != os.path.abspath(self.dest):
+                shutil.copyfile(src, self.dest)
+                final = self.dest
+        except Exception as e:
+            _cam_log("kopyalama başarısız (%s), kaynak kullanılıyor" % e)
+            final = src if verify_image(src) else ""
+        if not final or not verify_image(final):
+            self._cleanup_media()
+            return self.finish_with_error("Fotoğraf kaydedilemedi (dosya okunamıyor).")
+        try:
+            fixed = fix_image_orientation(final)
+            if fixed and verify_image(fixed):
+                final = fixed
+        except Exception as e:
+            _cam_log("orientation: %s" % e)
+        self._cleanup_media()
+        self.finish_ok(final)
+
+    def _cleanup_media(self):
+        if self.ms_uri is not None:
+            try:
+                _android_activity().getContentResolver().delete(self.ms_uri, None, None)
+            except Exception:
+                pass
+            self.ms_uri = None
+        if self.ms_path:
+            try:
+                if os.path.exists(self.ms_path):
+                    os.remove(self.ms_path)
+            except Exception:
+                pass
+            self.ms_path = ""
+        if self.dest:
+            try:
+                if os.path.exists(self.dest) and os.path.getsize(self.dest) == 0:
+                    os.remove(self.dest)
+            except Exception:
+                pass
+
+    def finish_ok(self, path):
+        self._finish(path, "")
+
+    def finish_with_error(self, msg):
+        self._finish("", msg)
+
+    def _finish(self, path, msg):
+        if self._done:
+            return
         self._done = True
+        if self._bound:
+            try:
+                from android import activity as android_activity
+                android_activity.unbind(on_activity_result=self._on_activity_result)
+            except Exception:
+                pass
+            self._bound = False
         if CameraCapture._active is self:
             CameraCapture._active = None
         try:
-            self.on_done(success, path_or_err)
-        except: pass
+            self.on_done(path or "", msg or "")
+        except Exception as e:
+            _cam_log("on_done: %s" % e)
 
 
 def load_settings():
@@ -1691,7 +1878,7 @@ class EvimApp(App):
             back.bind(on_release=lambda *a: Clock.schedule_once(lambda dt: on_back(), 0.1))
             bar.add_widget(back)
         lbl = Label(text=title, bold=True, font_size=fs(15), color=(1, 1, 1, 1), halign="left", valign="middle", shorten=True, size_hint_y=1)
-        lbl.bind(size=lambda w, val: setattr(w, "text_size", val))
+        lbl.bind(size=lambda w, *a: setattr(w, "text_size", w.size))
         bar.add_widget(lbl)
         if getattr(self, 'multi_select_mode', False) and bool(self.nav_stack):
             sel_btn = Button(text="Vazgeç", size_hint=(None, None), size=(dph(60), bar_h), background_normal="", background_color=(0,0,0,0), color=(1,1,1,1), font_size=fs(11), bold=True)
@@ -1968,7 +2155,7 @@ class EvimApp(App):
         content = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6), padding=(0, dp(6), 0, dp(90)))
         content.bind(minimum_height=content.setter("height"))
         lbl_cat = Label(text="Kategoriler", size_hint_y=None, height=dph(20), font_size=fs(13), bold=True, color=hex_rgba(th["text_secondary"]), halign="left", valign="middle")
-        lbl_cat.bind(size=lambda w, val: setattr(w, "text_size", val))
+        lbl_cat.bind(size=lambda w, *a: setattr(w, "text_size", (w.width, None)))
         content.add_widget(lbl_cat)
         cat_grid = GridLayout(cols=4, spacing=dp(6), padding=(dp(14), 0), size_hint_y=None)
         cat_grid.bind(minimum_height=cat_grid.setter("height"))
@@ -1979,7 +2166,7 @@ class EvimApp(App):
             cat_grid.add_widget(cb)
         content.add_widget(cat_grid)
         lbl_rooms = Label(text="Odalar", size_hint_y=None, height=dph(20), font_size=fs(15), bold=True, color=hex_rgba(th["text"]), halign="left", valign="middle")
-        lbl_rooms.bind(size=lambda w, val: setattr(w, "text_size", val))
+        lbl_rooms.bind(size=lambda w, *a: setattr(w, "text_size", (w.width, None)))
         content.add_widget(lbl_rooms)
         rooms = DB.get_rooms()
         grid_cols = 1 if len(rooms) == 1 else 2
@@ -2924,7 +3111,6 @@ class EvimApp(App):
         move_field = field("Taşınma koli no")
         move_field.input_filter = "int"
 
-        # FOTOĞRAF SEÇİM ALANI
         photo_row = BoxLayout(size_hint_y=None, height=dph(50), spacing=dp(8))
         photo_slot = SafeImage(size_hint_x=None, width=dph(50),
                               no_photo_text="fotoğraf\nokunamıyor")
@@ -2952,17 +3138,39 @@ class EvimApp(App):
             update_photo_preview()
 
         def take_camera_photo(*a):
-            def _cam_done(success, path_or_err):
-                if success:
-                    photo_state["current_file"] = path_or_err
-                    update_photo_preview()
-                elif path_or_err:
-                    self._show_message("Kamera Hatası", path_or_err)
+            def _cam_done(filepath, error=""):
+                def apply_cam(dt):
+                    if error:
+                        self._show_message("Kamera Hatası", error)
+                        return
+
+                    if filepath and os.path.exists(filepath):
+                        final, stored = store_photo(filepath)
+                        if final:
+                            photo_state["current_file"] = final
+                            update_photo_preview()
+                        else:
+                            self._show_message(
+                                "Uyarı",
+                                "Fotoğraf kaydedilemedi. Dosya okunamadı."
+                            )
+                        try:
+                            if os.path.exists(filepath):
+                                os.remove(filepath)
+                        except Exception:
+                            pass
+                    else:
+                        self._show_message(
+                            "Uyarı",
+                            "Kamera fotoğraf dosyası oluşturamadı."
+                        )
+
+                Clock.schedule_once(apply_cam, 0)
 
             try:
                 CameraCapture.run(_cam_done)
             except Exception as e:
-                self._show_message("Hata", f"Kamera başlatılamadı: {str(e)}")
+                self._show_message("Kamera Hatası", str(e))
 
         btn_box = BoxLayout(spacing=dp(6))
         gal_btn = Button(text="Galeri", background_normal="", background_color=hex_rgba(th["surface2"]), color=hex_rgba(th["text"]), font_size=fs(12))
