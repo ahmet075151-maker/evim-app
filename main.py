@@ -569,6 +569,7 @@ class CameraCapture:
         self._attempts = 0
         self._result_intent = None
         self._result_code = None
+        self._intent_uri_str = ""
         self._started_at = 0.0
 
     @classmethod
@@ -672,13 +673,24 @@ class CameraCapture:
         Clock.schedule_once(lambda dt: self.collect(), 0.6)
         return False
 
-    def _on_activity_result(self, request_code, result_code, intent):
+    def _on_activity_result(self, *args):
         try:
-            if request_code != CameraCapture.REQ: return
-            
+            # Android/Kivy sürümlerinde activity callback imzası değişebildiği
+            # için sabit parametre sayısı kullanmak dönüşte uygulama kapanmasına
+            # neden olabilir.
+            if len(args) < 2:
+                return
+
+            request_code = args[0]
+            result_code = args[1]
+            intent = args[2] if len(args) > 2 else None
+
+            if request_code != CameraCapture.REQ:
+                return
+
             self._result_code = result_code
             self._intent_uri_str = ""
-            
+
             if intent:
                 try:
                     data = intent.getData()
@@ -686,10 +698,10 @@ class CameraCapture:
                         self._intent_uri_str = data.toString()
                 except Exception:
                     pass
-                    
+
             Clock.schedule_once(lambda dt: self.collect(), 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            _cam_log("_on_activity_result: %s" % e)
 
     def collect(self):
         if self._done:
@@ -3145,20 +3157,28 @@ class EvimApp(App):
                         return
 
                     if filepath and os.path.exists(filepath):
-                        final, stored = store_photo(filepath)
-                        if final:
-                            photo_state["current_file"] = final
-                            update_photo_preview()
-                        else:
+                        try:
+                            final, stored = store_photo(filepath)
+                            if final:
+                                photo_state["current_file"] = final
+                                update_photo_preview()
+                            else:
+                                self._show_message(
+                                    "Uyarı",
+                                    "Fotoğraf kaydedilemedi. Dosya okunamadı."
+                                )
+                        except Exception as e:
+                            _cam_log("kamera foto işleme: %s" % e)
                             self._show_message(
                                 "Uyarı",
-                                "Fotoğraf kaydedilemedi. Dosya okunamadı."
+                                "Fotoğraf işlenirken hata oluştu."
                             )
-                        try:
-                            if os.path.exists(filepath):
-                                os.remove(filepath)
-                        except Exception:
-                            pass
+                        finally:
+                            try:
+                                if os.path.exists(filepath):
+                                    os.remove(filepath)
+                            except Exception:
+                                pass
                     else:
                         self._show_message(
                             "Uyarı",
